@@ -17,8 +17,8 @@ const STATE = {
   accessRole: null, // 'edit' | 'view' (비밀번호 로그인 후)
 };
 
-const ACCESS_EDIT = "1004";
-const ACCESS_VIEW = "1144";
+const ACCESS_EDIT = "1144";
+const ACCESS_VIEW = "1004";
 function canEdit() { return STATE.accessRole === "edit"; }
 
 /* ---------- 유틸 ---------- */
