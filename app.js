@@ -14,7 +14,12 @@ const STATE = {
   history: [],      // 데이터 수정 스냅샷 (현재 + 최대 3단계 이전)
   histIndex: -1,
   showAll: false,   // 특허 목록 전체 표시 여부
+  accessRole: null, // 'edit' | 'view' (비밀번호 로그인 후)
 };
+
+const ACCESS_EDIT = "1004";
+const ACCESS_VIEW = "1144";
+function canEdit() { return STATE.accessRole === "edit"; }
 
 /* ---------- 유틸 ---------- */
 function cssVar(name) {
@@ -354,6 +359,7 @@ function dateKey(iso) {
 
 // 데이터 변경 확정 → "수정일(날짜)" 기준 스냅샷 기록
 function commitChange() {
+  if (!canEdit()) return;
   savePatents();
   savePartMetrics();
   saveGroupGoals();
@@ -450,6 +456,7 @@ async function init() {
   refreshAll();
   updateDataMeta();
   updateHistButtons();
+  applyAccessUI();
 }
 
 /* ---------- 데이터 변경 후 전체 갱신 (분기 그래프 자동 연동) ---------- */
@@ -465,19 +472,21 @@ function refreshAll() {
 /* ---------- 사이드바 파트 (클릭 시 지표 입력) ---------- */
 function buildCompanyNav() {
   const wrap = document.getElementById("companyNav");
+  const editable = canEdit();
   wrap.innerHTML = STATE.data.companies.map(c => {
     const m = partMetric(c.id);
     const annual = m.target[m.target.length - 1] || 0;
     const done = partQuarterlyCum(c.id)[3];
     const badge = annual ? `${done}/${annual}` : `${done}`;
     return `
-    <a href="#" data-company="${c.id}" title="클릭하여 지표 입력">
+    <a href="#" data-company="${c.id}" title="${editable ? "클릭하여 지표 입력" : "보기 전용"}">
       <span class="ico" style="color:${cssVar("--" + c.color)}">●</span>
       ${c.name}
-      <span class="part-edit">✎</span>
+      ${editable ? '<span class="part-edit">✎</span>' : ""}
       <span style="margin-left:auto;color:var(--muted-foreground);font-size:.78rem">${badge}</span>
     </a>`;
   }).join("");
+  if (!editable) return;
   wrap.querySelectorAll("a").forEach(a => {
     a.addEventListener("click", (e) => {
       e.preventDefault();
@@ -533,7 +542,7 @@ function renderKPIs() {
       const tone = pct >= 100 ? "up" : "";
       const extra = `<div class="kpi-delta ${tone}">목표 ${target} · 달성률 ${pct}%</div>
         <div class="kpi-progress"><span style="width:${Math.min(pct, 100)}%"></span></div>`;
-      return kpiHTML(c.icon, c.label, `${done} <span class="kpi-unit">/ ${target}</span>`, extra, true);
+      return kpiHTML(c.icon, c.label, `${done} <span class="kpi-unit">/ ${target}</span>`, extra, canEdit());
     }
     if (c.type === "metric") {
       const n = sumMetric(c.metric);
@@ -1017,26 +1026,32 @@ function renderTable() {
   const rows = STATE.filtered;
   const visible = STATE.showAll ? rows : rows.slice(0, TABLE_PAGE);
 
+  const editable = canEdit();
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="7" class="empty">등록된 특허가 없습니다. 우측 상단의 “＋ 특허 추가”로 입력하면 분기 그래프가 자동 갱신됩니다.</td></tr>`;
+    const hint = editable
+      ? "등록된 특허가 없습니다. 우측 상단의 “＋ 특허 추가”로 입력하면 분기 그래프가 자동 갱신됩니다."
+      : "등록된 특허가 없습니다.";
+    body.innerHTML = `<tr><td colspan="7" class="empty">${hint}</td></tr>`;
   } else {
     body.innerHTML = visible.map(p => `
-      <tr class="row-edit" data-id="${esc(p.id)}" title="클릭하여 수정">
+      <tr class="${editable ? "row-edit" : ""}" data-id="${esc(p.id)}"${editable ? ' title="클릭하여 수정"' : ""}>
         <td class="mono">${p.id}</td>
         <td class="cell-title">${esc(p.title)}</td>
         <td>${esc(p.inventor) || "—"}</td>
         <td><span class="company-tag"><span class="swatch" style="background:${companyColor(p.company)}"></span>${companyName(p.company)}</span></td>
         <td><span class="badge ${p.grade === "A1" ? "primary" : "outline"}">${p.grade || "—"}</span></td>
         <td class="mono">${fmtDate(p.filingDate)}</td>
-        <td><button class="btn icon row-del" data-id="${esc(p.id)}" title="삭제">🗑</button></td>
+        <td class="col-actions">${editable ? `<button class="btn icon row-del" data-id="${esc(p.id)}" title="삭제">🗑</button>` : ""}</td>
       </tr>`).join("");
-    body.querySelectorAll("tr.row-edit").forEach(tr =>
-      tr.addEventListener("click", () => {
-        const p = STATE.data.patents.find(x => x.id === tr.dataset.id);
-        if (p) openModal(p);
-      }));
-    body.querySelectorAll(".row-del").forEach(btn =>
-      btn.addEventListener("click", (e) => { e.stopPropagation(); deletePatent(btn.dataset.id); }));
+    if (editable) {
+      body.querySelectorAll("tr.row-edit").forEach(tr =>
+        tr.addEventListener("click", () => {
+          const p = STATE.data.patents.find(x => x.id === tr.dataset.id);
+          if (p) openModal(p);
+        }));
+      body.querySelectorAll(".row-del").forEach(btn =>
+        btn.addEventListener("click", (e) => { e.stopPropagation(); deletePatent(btn.dataset.id); }));
+    }
   }
 
   // "모두 보기" 버튼 표시/문구
@@ -1111,6 +1126,7 @@ function bindEvents() {
 let editingId = null;
 
 function openModal(patent) {
+  if (!canEdit()) return;
   const m = document.getElementById("addModal");
   const form = document.getElementById("addForm");
   const idInput = form.querySelector('[name="id"]');
@@ -1213,6 +1229,7 @@ function addPatent(p) {
 }
 
 function deletePatent(id) {
+  if (!canEdit()) return;
   const p = STATE.data.patents.find(x => x.id === id);
   if (!confirm(`'${p ? p.title : id}' 특허를 삭제할까요?`)) return;
   STATE.data.patents = STATE.data.patents.filter(x => x.id !== id);
@@ -1221,6 +1238,7 @@ function deletePatent(id) {
 
 /* ---------- 파트별 지표 입력 (심사중/직발서/아이디어 + 분기 목표) ---------- */
 function openMetricModal(companyId) {
+  if (!canEdit()) return;
   const m = partMetric(companyId);
   const form = document.getElementById("metricForm");
   document.getElementById("metricPartName").textContent = companyName(companyId);
@@ -1268,6 +1286,7 @@ function hideModal(el) {
 }
 
 function openGoalsModal() {
+  if (!canEdit()) return;
   if (!STATE.data) {
     alert("데이터를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
     return;
@@ -1307,7 +1326,7 @@ function bindGoalsEvents() {
     if (e.target.closest("#editGoalsBtn")) {
       e.preventDefault();
       e.stopPropagation();
-      openGoalsModal();
+      if (canEdit()) openGoalsModal();
     }
   });
 
@@ -1416,9 +1435,26 @@ function debounce(fn, ms) {
   }
 })();
 
-/* ---------- 비밀번호 잠금 ---------- */
-const ACCESS_PASSWORD = "1004";
+/* ---------- 비밀번호 잠금 · 권한 ---------- */
 let appStarted = false;
+
+function applyAccessUI() {
+  const edit = canEdit();
+  document.body.classList.toggle("readonly-mode", !edit);
+  const badge = document.getElementById("accessBadge");
+  if (badge) {
+    badge.textContent = edit ? "편집 권한" : "보기 전용";
+    badge.className = "access-badge " + (edit ? "edit" : "view");
+    badge.hidden = false;
+  }
+  const addBtn = document.getElementById("addBtn");
+  if (addBtn) addBtn.hidden = !edit;
+  const goalsBtn = document.getElementById("editGoalsBtn");
+  if (goalsBtn) goalsBtn.hidden = !edit;
+  const hist = document.querySelector(".hist-controls");
+  if (hist) hist.hidden = !edit;
+  document.querySelectorAll(".th-actions").forEach(el => { el.hidden = !edit; });
+}
 
 async function startApp() {
   if (appStarted) return;
@@ -1427,9 +1463,11 @@ async function startApp() {
   const themeBtn = document.getElementById("themeToggle");
   if (themeBtn) themeBtn.textContent = dark ? "☀️" : "🌙";
   await init();
+  applyAccessUI();
 }
 
-function unlockApp() {
+function unlockApp(role) {
+  STATE.accessRole = role;
   document.body.classList.remove("locked");
   document.getElementById("lockScreen")?.classList.add("hidden");
   startApp();
@@ -1450,9 +1488,13 @@ function setupLock() {
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    if (input.value === ACCESS_PASSWORD) {
+    const pw = input.value.trim();
+    if (pw === ACCESS_EDIT) {
       err.hidden = true;
-      unlockApp();
+      unlockApp("edit");
+    } else if (pw === ACCESS_VIEW) {
+      err.hidden = true;
+      unlockApp("view");
     } else {
       err.hidden = false;
       input.value = "";
