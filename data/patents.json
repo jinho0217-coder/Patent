@@ -1,0 +1,37 @@
+{
+  "group": {
+    "name": "선행기구개발그룹",
+    "nameEn": "Advanced Mechanism Development Group",
+    "description": "그룹 2026년 특허 현황",
+    "updatedAt": "2026-05-31"
+  },
+  "kpis": [
+    { "type": "goal", "icon": "🏅", "label": "A1 등급", "grade": "A1" },
+    { "type": "goal", "icon": "🥇", "label": "A 등급", "grade": "A" },
+    { "type": "metric", "icon": "⏳", "label": "심사중", "metric": "pending", "sub": "출원 진행중" },
+    { "type": "metric", "icon": "📝", "label": "직발서 작성", "metric": "disclosure", "sub": "직무발명신고서" },
+    { "type": "metric", "icon": "💡", "label": "아이디어 시트", "metric": "idea", "sub": "제출" }
+  ],
+  "goals": {
+    "year": 2026,
+    "grades": [
+      { "id": "A1", "label": "A1 목표", "color": "chart-5", "quarterlyTarget": [8, 12, 17, 20] },
+      { "id": "A", "label": "A 목표", "color": "chart-2", "quarterlyTarget": [20, 30, 35, 42] }
+    ]
+  },
+  "companies": [
+    { "id": "ne", "name": "NE", "color": "chart-1" },
+    { "id": "package", "name": "패키지", "color": "chart-2" },
+    { "id": "cmf1", "name": "선행CMF1", "color": "chart-3" },
+    { "id": "cmf2", "name": "선행CMF2", "color": "chart-4" },
+    { "id": "cmf3", "name": "선행CMF3", "color": "chart-5" },
+    { "id": "bonding", "name": "접합", "color": "chart-6" }
+  ],
+  "statusMeta": [
+    { "id": "registered", "label": "등록", "tone": "primary" },
+    { "id": "pending", "label": "출원(심사중)", "tone": "accent" },
+    { "id": "rejected", "label": "거절", "tone": "destructive" },
+    { "id": "abandoned", "label": "포기/소멸", "tone": "muted" }
+  ],
+  "patents": []
+}

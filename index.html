@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>한빛그룹 특허 현황 대시보드</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Source+Code+Pro&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo" id="brandLogo">H</div>
+        <div class="brand-text">
+          <h1 id="brandName">한빛그룹</h1>
+          <p>Patent Portfolio</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <span class="nav-label">메뉴</span>
+        <a href="#overview" class="active"><span class="ico">▦</span> 대시보드</a>
+        <a href="#analytics"><span class="ico">📊</span> 분석</a>
+        <a href="#list"><span class="ico">▤</span> 특허 목록</a>
+        <span class="nav-label">파트</span>
+        <div id="companyNav"></div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div>데이터 수정일</div>
+        <strong id="updatedAt">—</strong>
+        <div class="hist-controls">
+          <button class="btn icon" id="undoBtn" title="이전 수정 상태로 (되돌리기)">↶</button>
+          <button class="btn icon" id="redoBtn" title="다음 수정 상태로 (앞으로)">↷</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <header class="topbar">
+        <div class="title">
+          <h2>그룹 특허 현황</h2>
+          <p id="subTitle">그룹 2026년 특허 현황</p>
+        </div>
+        <div class="actions">
+          <button class="btn" id="exportBtn"><span>⬇</span> CSV 내보내기</button>
+          <button class="btn icon" id="themeToggle" title="다크 모드 전환">🌙</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- KPIs -->
+        <section id="overview" class="kpi-grid"></section>
+
+        <!-- Charts row 1 -->
+        <section class="grid-3">
+          <div class="card" id="analytics">
+            <div class="card-head">
+              <div>
+                <h3>분기별 출원 추이</h3>
+                <span class="sub" id="trendSub">분기 목표 대비 달성</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div><h3>그룹 2026 상태별 분포</h3><span class="sub">등록·심사중·직발서·아이디어</span></div>
+            </div>
+            <div class="card-body">
+              <div class="chart-wrap"><canvas id="statusChart"></canvas></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Charts row 2 -->
+        <section class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <div><h3>파트별 진행 현황</h3><span class="sub" id="progressSub">파트별 분기 실적·목표</span></div>
+            </div>
+            <div class="card-body">
+              <div id="progressGrid" class="mini-grid"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div><h3>파트별 포트폴리오 비중</h3><span class="sub">특허·심사중·직발서·아이디어 (건수 비례)</span></div>
+            </div>
+            <div class="card-body">
+              <div class="bars" id="companyBars"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Patent list -->
+        <section class="card" id="list">
+          <div class="card-head">
+            <div><h3>특허 목록</h3><span class="sub" id="listSub">전체 특허</span></div>
+            <button class="btn primary" id="addBtn"><span>＋</span> 특허 추가</button>
+          </div>
+          <div class="card-body">
+            <div class="filters">
+              <div class="search">
+                <span class="search-ico">🔍</span>
+                <input class="input" type="text" id="searchInput" placeholder="특허명, 발명자, 출원번호 검색…" />
+              </div>
+              <div class="field">
+                <label for="companyFilter">파트</label>
+                <select class="input" id="companyFilter"><option value="">전체</option></select>
+              </div>
+              <div class="field">
+                <label for="statusFilter">상태</label>
+                <select class="input" id="statusFilter"><option value="">전체</option></select>
+              </div>
+              <div class="field">
+                <label for="fieldFilter">기술 분야</label>
+                <select class="input" id="fieldFilter"><option value="">전체</option></select>
+              </div>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="sortable" data-sort="id">관리번호 <span class="arrow"></span></th>
+                  <th class="sortable" data-sort="title">특허명 <span class="arrow"></span></th>
+                  <th class="sortable" data-sort="inventor">발명자 <span class="arrow"></span></th>
+                  <th class="sortable" data-sort="company">파트 <span class="arrow"></span></th>
+                  <th class="sortable" data-sort="grade">등급 <span class="arrow"></span></th>
+                  <th class="sortable" data-sort="filingDate">출원일 <span class="arrow"></span></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="tableBody"></tbody>
+            </table>
+          </div>
+          <div class="table-more" id="tableMore" hidden>
+            <button class="btn" id="toggleAllBtn">모두 보기</button>
+          </div>
+          <div class="table-foot">
+            <span id="resultCount">—</span>
+            <span id="footBrand">IP 관리시스템</span>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- 특허 추가 모달 -->
+  <div class="modal-overlay" id="addModal" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="addModalTitle">특허 추가</h3>
+        <button class="btn icon" id="modalClose" title="닫기">✕</button>
+      </div>
+      <form id="addForm" class="modal-body">
+        <div class="form-grid">
+          <div class="field">
+            <label>관리번호</label>
+            <input class="input" name="id" placeholder="예) P-2026-009" required />
+          </div>
+          <div class="field">
+            <label>출원일 *</label>
+            <input class="input" type="date" name="filingDate" required />
+          </div>
+          <div class="field span2">
+            <label>특허명 *</label>
+            <input class="input" name="title" placeholder="발명의 명칭" required />
+          </div>
+          <div class="field">
+            <label>파트 *</label>
+            <select class="input" name="company" id="formCompany" required></select>
+          </div>
+          <div class="field">
+            <label>등급 *</label>
+            <select class="input" name="grade" required>
+              <option value="A1">A1</option>
+              <option value="A">A</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>발명자</label>
+            <input class="input" name="inventor" placeholder="홍길동" />
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn" id="modalCancel">취소</button>
+          <button type="submit" class="btn primary">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 파트 지표 입력 모달 -->
+  <div class="modal-overlay" id="metricModal" hidden>
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <h3><span id="metricPartName">파트</span> 지표 입력</h3>
+        <button class="btn icon" id="metricClose" title="닫기">✕</button>
+      </div>
+      <form id="metricForm" class="modal-body">
+        <input type="hidden" name="companyId" />
+        <div class="form-grid">
+          <div class="field span2">
+            <label>⏳ 심사중</label>
+            <input class="input" type="number" min="0" name="pending" value="0" />
+          </div>
+          <div class="field span2">
+            <label>📝 직발서 작성</label>
+            <input class="input" type="number" min="0" name="disclosure" value="0" />
+          </div>
+          <div class="field span2">
+            <label>💡 아이디어 시트</label>
+            <input class="input" type="number" min="0" name="idea" value="0" />
+          </div>
+        </div>
+        <div class="metric-section-title">🎯 분기별 목표 (누적)</div>
+        <div class="form-grid form-grid-4">
+          <div class="field">
+            <label>1분기</label>
+            <input class="input" type="number" min="0" name="t1" value="0" />
+          </div>
+          <div class="field">
+            <label>2분기</label>
+            <input class="input" type="number" min="0" name="t2" value="0" />
+          </div>
+          <div class="field">
+            <label>3분기</label>
+            <input class="input" type="number" min="0" name="t3" value="0" />
+          </div>
+          <div class="field">
+            <label>4분기</label>
+            <input class="input" type="number" min="0" name="t4" value="0" />
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn" id="metricCancel">취소</button>
+          <button type="submit" class="btn primary">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
