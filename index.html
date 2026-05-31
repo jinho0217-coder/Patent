@@ -91,6 +91,7 @@
                 <h3>분기별 출원 추이</h3>
                 <span class="sub" id="trendSub">분기 목표 대비 달성</span>
               </div>
+              <button type="button" class="btn" id="editGoalsBtn" title="그룹 A1·A 분기별 목표 수정">🎯 목표 수정</button>
             </div>
             <div class="card-body">
               <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
@@ -221,6 +222,37 @@
         </div>
         <div class="modal-foot">
           <button type="button" class="btn" id="modalCancel">취소</button>
+          <button type="submit" class="btn primary">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 그룹 분기별 출원 목표 모달 -->
+  <div class="modal-overlay" id="goalsModal" hidden>
+    <div class="modal" style="max-width:440px">
+      <div class="modal-head">
+        <h3>그룹 분기별 출원 목표</h3>
+        <button class="btn icon" id="goalsClose" title="닫기">✕</button>
+      </div>
+      <form id="goalsForm" class="modal-body">
+        <div class="metric-section-title">🏅 A1 목표 (분기별 누적)</div>
+        <div class="form-grid form-grid-4">
+          <div class="field"><label>1분기</label><input class="input" type="number" min="0" name="a1_t1" value="0" /></div>
+          <div class="field"><label>2분기</label><input class="input" type="number" min="0" name="a1_t2" value="0" /></div>
+          <div class="field"><label>3분기</label><input class="input" type="number" min="0" name="a1_t3" value="0" /></div>
+          <div class="field"><label>4분기</label><input class="input" type="number" min="0" name="a1_t4" value="0" /></div>
+        </div>
+        <div class="metric-section-title">🥇 A 목표 (분기별 누적)</div>
+        <div class="form-grid form-grid-4">
+          <div class="field"><label>1분기</label><input class="input" type="number" min="0" name="a_t1" value="0" /></div>
+          <div class="field"><label>2분기</label><input class="input" type="number" min="0" name="a_t2" value="0" /></div>
+          <div class="field"><label>3분기</label><input class="input" type="number" min="0" name="a_t3" value="0" /></div>
+          <div class="field"><label>4분기</label><input class="input" type="number" min="0" name="a_t4" value="0" /></div>
+        </div>
+        <p class="form-hint">분기별 누적 건수 기준입니다. KPI·출원 추이 차트에 바로 반영됩니다.</p>
+        <div class="modal-foot">
+          <button type="button" class="btn" id="goalsCancel">취소</button>
           <button type="submit" class="btn primary">저장</button>
         </div>
       </form>

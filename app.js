@@ -103,6 +103,36 @@ function savePartMetrics() {
   try { localStorage.setItem(STORAGE_KEY_METRICS, JSON.stringify(STATE.partMetrics)); } catch {}
 }
 function partMetric(id) { return STATE.partMetrics[id] || emptyMetric(); }
+
+/* ---------- 그룹 분기별 목표 (A1 / A) ---------- */
+const STORAGE_KEY_GOALS = "amd_group_goals_v1";
+function getGroupGoalsSnapshot() {
+  const goals = STATE.data?.goals;
+  if (!goals) return null;
+  return {
+    year: goals.year,
+    grades: goals.grades.map(g => ({ id: g.id, quarterlyTarget: [...g.quarterlyTarget] })),
+  };
+}
+function applyGroupGoals(saved) {
+  if (!saved?.grades || !STATE.data?.goals) return;
+  if (saved.year) STATE.data.goals.year = saved.year;
+  saved.grades.forEach(og => {
+    const g = STATE.data.goals.grades.find(x => x.id === og.id);
+    if (g && Array.isArray(og.quarterlyTarget)) g.quarterlyTarget = [...og.quarterlyTarget];
+  });
+}
+function loadSavedGroupGoals() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_GOALS);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveGroupGoals() {
+  const snap = getGroupGoalsSnapshot();
+  if (!snap) return;
+  try { localStorage.setItem(STORAGE_KEY_GOALS, JSON.stringify(snap)); } catch {}
+}
 function sumMetric(key) {
   return STATE.data.companies.reduce((s, c) => s + (partMetric(c.id)[key] || 0), 0);
 }
@@ -195,27 +225,69 @@ async function cloudSaveMetrics(map) {
   });
   if (!res.ok) throw new Error("upsert metrics " + res.status + " " + (await res.text()));
 }
+async function cloudLoadGroupGoals() {
+  const res = await fetch(`${SB_REST}/group_goals?select=*`, { headers: SB_HEADERS });
+  if (!res.ok) throw new Error("load group_goals " + res.status);
+  const rows = await res.json();
+  if (!rows.length) return null;
+  return {
+    year: rows[0].year,
+    grades: rows.map(r => ({
+      id: r.grade_id,
+      quarterlyTarget: [r.t1 || 0, r.t2 || 0, r.t3 || 0, r.t4 || 0],
+    })),
+  };
+}
+async function cloudSaveGroupGoals() {
+  const goals = STATE.data?.goals;
+  if (!goals) return;
+  const rows = goals.grades.map(g => ({
+    grade_id: g.id,
+    year: goals.year,
+    t1: g.quarterlyTarget[0] || 0,
+    t2: g.quarterlyTarget[1] || 0,
+    t3: g.quarterlyTarget[2] || 0,
+    t4: g.quarterlyTarget[3] || 0,
+  }));
+  if (!rows.length) return;
+  const res = await fetch(`${SB_REST}/group_goals`, {
+    method: "POST",
+    headers: { ...SB_HEADERS, Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(rows),
+  });
+  if (!res.ok) throw new Error("upsert group_goals " + res.status + " " + (await res.text()));
+}
 
 // 초기 클라우드 로드. 클라우드가 비어있고 로컬 데이터가 있으면 1회 업로드(이전).
 async function cloudInit() {
   try {
-    const [patents, metrics] = await Promise.all([cloudLoadPatents(), cloudLoadMetrics()]);
-    const cloudEmpty = patents.length === 0 && Object.keys(metrics).length === 0;
+    const [patents, metrics, cloudGoals] = await Promise.all([
+      cloudLoadPatents(), cloudLoadMetrics(), cloudLoadGroupGoals(),
+    ]);
+    const cloudEmpty = patents.length === 0 && Object.keys(metrics).length === 0 && !cloudGoals;
     const localPatents = loadSavedPatents();
+    const localGoals = loadSavedGroupGoals();
     const hasLocal = (localPatents && localPatents.length) ||
-      Object.values(STATE.partMetrics).some(m => m.pending || m.disclosure || m.idea || (m.target || []).some(Boolean));
+      Object.values(STATE.partMetrics).some(m => m.pending || m.disclosure || m.idea || (m.target || []).some(Boolean)) ||
+      localGoals;
     if (cloudEmpty && hasLocal) {
       if (localPatents) STATE.data.patents = localPatents;
-      await syncCloud();                 // 기존 로컬 데이터를 클라우드로 이전
+      if (localGoals) applyGroupGoals(localGoals);
+      await syncCloud();
     } else {
       STATE.data.patents = patents;
       STATE.data.companies.forEach(c => { if (metrics[c.id]) STATE.partMetrics[c.id] = metrics[c.id]; });
+      if (cloudGoals) applyGroupGoals(cloudGoals);
+      else if (localGoals) applyGroupGoals(localGoals);
     }
+    saveGroupGoals();
     STATE.cloudOk = true;
   } catch (e) {
     console.warn("클라우드 연결 실패 → 로컬 데이터 사용:", e);
     const localPatents = loadSavedPatents();
     if (localPatents) STATE.data.patents = localPatents;
+    const localGoals = loadSavedGroupGoals();
+    if (localGoals) applyGroupGoals(localGoals);
     STATE.cloudOk = false;
   }
   updateCloudStatus();
@@ -227,6 +299,7 @@ async function syncCloud() {
   try {
     await cloudSavePatents(STATE.data.patents);
     await cloudSaveMetrics(STATE.partMetrics);
+    await cloudSaveGroupGoals();
     STATE.cloudOk = true;
   } catch (e) {
     console.warn("클라우드 저장 실패:", e);
@@ -249,6 +322,7 @@ function cloneSnapshot() {
   return {
     patents: JSON.parse(JSON.stringify(STATE.data.patents)),
     partMetrics: JSON.parse(JSON.stringify(STATE.partMetrics)),
+    goals: getGroupGoalsSnapshot(),
     savedAt: new Date().toISOString(),
   };
 }
@@ -282,6 +356,7 @@ function dateKey(iso) {
 function commitChange() {
   savePatents();
   savePartMetrics();
+  saveGroupGoals();
   const snap = cloneSnapshot();               // savedAt = 현재 시각
   const today = dateKey(snap.savedAt);
   STATE.history = STATE.history.slice(0, STATE.histIndex + 1); // redo 분기 제거
@@ -304,8 +379,10 @@ function commitChange() {
 function applySnapshot(snap) {
   STATE.data.patents = JSON.parse(JSON.stringify(snap.patents));
   STATE.partMetrics = JSON.parse(JSON.stringify(snap.partMetrics));
+  if (snap.goals) applyGroupGoals(snap.goals);
   savePatents();
   savePartMetrics();
+  saveGroupGoals();
   refreshAll();
   updateDataMeta();
   updateHistButtons();
@@ -368,6 +445,7 @@ async function init() {
   bindEvents();
   bindFormEvents();
   bindMetricEvents();
+  bindGoalsEvents();
   refreshAll();
   updateDataMeta();
   updateHistButtons();
@@ -454,7 +532,7 @@ function renderKPIs() {
       const tone = pct >= 100 ? "up" : "";
       const extra = `<div class="kpi-delta ${tone}">목표 ${target} · 달성률 ${pct}%</div>
         <div class="kpi-progress"><span style="width:${Math.min(pct, 100)}%"></span></div>`;
-      return kpiHTML(c.icon, c.label, `${done} <span class="kpi-unit">/ ${target}</span>`, extra);
+      return kpiHTML(c.icon, c.label, `${done} <span class="kpi-unit">/ ${target}</span>`, extra, true);
     }
     if (c.type === "metric") {
       const n = sumMetric(c.metric);
@@ -470,9 +548,11 @@ function renderKPIs() {
   }).join("");
 }
 
-function kpiHTML(icon, label, value, extra) {
+function kpiHTML(icon, label, value, extra, editable) {
+  const cls = editable ? "kpi kpi-editable" : "kpi";
+  const attrs = editable ? ' role="button" tabindex="0" data-goal-edit title="클릭하여 그룹 목표 수정"' : "";
   return `
-    <div class="kpi">
+    <div class="${cls}"${attrs}>
       <div class="kpi-icon">${icon || "📌"}</div>
       <div class="kpi-label">${label}</div>
       <div class="kpi-value">${value}</div>
@@ -1154,6 +1234,53 @@ function openMetricModal(companyId) {
   document.getElementById("metricModal").hidden = false;
 }
 function closeMetricModal() { document.getElementById("metricModal").hidden = true; }
+
+/* ---------- 그룹 분기별 출원 목표 입력 ---------- */
+function openGoalsModal() {
+  const goals = STATE.data.goals;
+  if (!goals) return;
+  const form = document.getElementById("goalsForm");
+  const a1 = goals.grades.find(g => g.id === "A1");
+  const a = goals.grades.find(g => g.id === "A");
+  const setQ = (name, arr, i) => { if (form[name]) form[name].value = (arr || [])[i] || 0; };
+  if (a1) { setQ("a1_t1", a1.quarterlyTarget, 0); setQ("a1_t2", a1.quarterlyTarget, 1); setQ("a1_t3", a1.quarterlyTarget, 2); setQ("a1_t4", a1.quarterlyTarget, 3); }
+  if (a) { setQ("a_t1", a.quarterlyTarget, 0); setQ("a_t2", a.quarterlyTarget, 1); setQ("a_t3", a.quarterlyTarget, 2); setQ("a_t4", a.quarterlyTarget, 3); }
+  document.getElementById("goalsModal").hidden = false;
+}
+function closeGoalsModal() { document.getElementById("goalsModal").hidden = true; }
+
+function bindGoalsEvents() {
+  document.getElementById("editGoalsBtn")?.addEventListener("click", openGoalsModal);
+  document.getElementById("goalsClose")?.addEventListener("click", closeGoalsModal);
+  document.getElementById("goalsCancel")?.addEventListener("click", closeGoalsModal);
+  document.getElementById("goalsModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "goalsModal") closeGoalsModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !document.getElementById("goalsModal").hidden) closeGoalsModal();
+  });
+  document.getElementById("goalsForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const num = (v) => Math.max(0, parseInt(v, 10) || 0);
+    const goals = STATE.data.goals;
+    const a1 = goals.grades.find(g => g.id === "A1");
+    const a = goals.grades.find(g => g.id === "A");
+    if (a1) a1.quarterlyTarget = [num(f.a1_t1.value), num(f.a1_t2.value), num(f.a1_t3.value), num(f.a1_t4.value)];
+    if (a) a.quarterlyTarget = [num(f.a_t1.value), num(f.a_t2.value), num(f.a_t3.value), num(f.a_t4.value)];
+    commitChange();
+    closeGoalsModal();
+  });
+  document.getElementById("overview")?.addEventListener("click", (e) => {
+    if (e.target.closest("[data-goal-edit]")) openGoalsModal();
+  });
+  document.getElementById("overview")?.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.closest("[data-goal-edit]")) {
+      e.preventDefault();
+      openGoalsModal();
+    }
+  });
+}
 
 function bindMetricEvents() {
   document.getElementById("metricClose")?.addEventListener("click", closeMetricModal);
