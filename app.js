@@ -1219,8 +1219,45 @@ function debounce(fn, ms) {
   }
 })();
 
-document.addEventListener("DOMContentLoaded", () => {
+/* ---------- 비밀번호 잠금 ---------- */
+const ACCESS_PASSWORD = "1004";
+const ACCESS_KEY = "patent_access_ok";
+let appStarted = false;
+
+function startApp() {
+  if (appStarted) return;
+  appStarted = true;
   const dark = document.documentElement.classList.contains("dark");
   document.getElementById("themeToggle").textContent = dark ? "☀️" : "🌙";
   init();
-});
+}
+
+function unlockApp() {
+  const screen = document.getElementById("lockScreen");
+  if (screen) screen.classList.add("hidden");
+  startApp();
+}
+
+function setupLock() {
+  const screen = document.getElementById("lockScreen");
+  // 이미 이번 세션에서 인증했다면 바로 입장
+  if (sessionStorage.getItem(ACCESS_KEY) === "1") { unlockApp(); return; }
+  const form = document.getElementById("lockForm");
+  const input = document.getElementById("lockInput");
+  const err = document.getElementById("lockError");
+  input?.focus();
+  form?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (input.value === ACCESS_PASSWORD) {
+      sessionStorage.setItem(ACCESS_KEY, "1");
+      err.hidden = true;
+      unlockApp();
+    } else {
+      err.hidden = false;
+      input.value = "";
+      input.focus();
+    }
+  });
+}
+
+document.addEventListener("DOMContentLoaded", setupLock);
