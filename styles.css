@@ -457,7 +457,7 @@ tbody tr:last-child td { border-bottom: none; }
 .lock-screen {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: 99999;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -466,7 +466,11 @@ tbody tr:last-child td { border-bottom: none; }
     radial-gradient(1200px 600px at 50% -10%, var(--accent), transparent 60%),
     var(--background);
 }
-.lock-screen.hidden { display: none; }
+body.locked .lock-screen { display: flex; }
+.lock-screen.hidden { display: none !important; }
+body.locked .app,
+body.locked .modal-overlay { display: none !important; }
+body.locked { overflow: hidden; height: 100vh; }
 .lock-box {
   width: 100%;
   max-width: 340px;
