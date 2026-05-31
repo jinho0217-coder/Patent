@@ -440,9 +440,10 @@ async function init() {
   document.getElementById("footBrand").textContent = `${data.group.name} IP 관리시스템`;
   document.title = `${data.group.name} 특허 현황 대시보드`;
 
+  ensureGroupGoals();
   buildStaticFilters();
   buildFormOptions();
-  bindEvents();
+  try { bindEvents(); } catch (e) { console.error("bindEvents:", e); }
   bindFormEvents();
   bindMetricEvents();
   bindGoalsEvents();
@@ -1236,43 +1237,112 @@ function openMetricModal(companyId) {
 function closeMetricModal() { document.getElementById("metricModal").hidden = true; }
 
 /* ---------- 그룹 분기별 출원 목표 입력 ---------- */
+function ensureGroupGoals() {
+  if (!STATE.data) return;
+  if (STATE.data.goals?.grades?.length >= 2) return;
+  STATE.data.goals = {
+    year: STATE.data.goals?.year || new Date().getFullYear(),
+    grades: [
+      { id: "A1", label: "A1 목표", color: "chart-5", quarterlyTarget: [8, 12, 17, 20] },
+      { id: "A", label: "A 목표", color: "chart-2", quarterlyTarget: [20, 30, 35, 42] },
+    ],
+  };
+}
+function setGoalInput(form, name, value) {
+  const el = form.elements.namedItem(name);
+  if (el) el.value = value;
+}
+function readGoalInput(form, name) {
+  const el = form.elements.namedItem(name);
+  return Math.max(0, parseInt(el?.value, 10) || 0);
+}
+function showModal(el) {
+  if (!el) return;
+  el.hidden = false;
+  el.removeAttribute("hidden");
+}
+function hideModal(el) {
+  if (!el) return;
+  el.hidden = true;
+  el.setAttribute("hidden", "");
+}
+
 function openGoalsModal() {
-  const goals = STATE.data.goals;
-  if (!goals) return;
+  if (!STATE.data) {
+    alert("데이터를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+    return;
+  }
+  ensureGroupGoals();
+  const modal = document.getElementById("goalsModal");
   const form = document.getElementById("goalsForm");
+  if (!modal || !form) {
+    alert("목표 입력 창을 찾을 수 없습니다. 페이지를 새로고침해 주세요.");
+    return;
+  }
+  showModal(modal);
+  const goals = STATE.data.goals;
   const a1 = goals.grades.find(g => g.id === "A1");
   const a = goals.grades.find(g => g.id === "A");
-  const setQ = (name, arr, i) => { if (form[name]) form[name].value = (arr || [])[i] || 0; };
-  if (a1) { setQ("a1_t1", a1.quarterlyTarget, 0); setQ("a1_t2", a1.quarterlyTarget, 1); setQ("a1_t3", a1.quarterlyTarget, 2); setQ("a1_t4", a1.quarterlyTarget, 3); }
-  if (a) { setQ("a_t1", a.quarterlyTarget, 0); setQ("a_t2", a.quarterlyTarget, 1); setQ("a_t3", a.quarterlyTarget, 2); setQ("a_t4", a.quarterlyTarget, 3); }
-  document.getElementById("goalsModal").hidden = false;
+  const q = (g, i) => (g?.quarterlyTarget || [])[i] || 0;
+  if (a1) {
+    setGoalInput(form, "a1_t1", q(a1, 0)); setGoalInput(form, "a1_t2", q(a1, 1));
+    setGoalInput(form, "a1_t3", q(a1, 2)); setGoalInput(form, "a1_t4", q(a1, 3));
+  }
+  if (a) {
+    setGoalInput(form, "a_t1", q(a, 0)); setGoalInput(form, "a_t2", q(a, 1));
+    setGoalInput(form, "a_t3", q(a, 2)); setGoalInput(form, "a_t4", q(a, 3));
+  }
+  setTimeout(() => form.elements.namedItem("a1_t1")?.focus(), 50);
 }
-function closeGoalsModal() { document.getElementById("goalsModal").hidden = true; }
+function closeGoalsModal() {
+  hideModal(document.getElementById("goalsModal"));
+}
 
 function bindGoalsEvents() {
-  document.getElementById("editGoalsBtn")?.addEventListener("click", openGoalsModal);
+  if (bindGoalsEvents._bound) return;
+  bindGoalsEvents._bound = true;
+
+  // 버튼이 나중에 그려져도 동작하도록 document 위임
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#editGoalsBtn")) {
+      e.preventDefault();
+      e.stopPropagation();
+      openGoalsModal();
+    }
+  });
+
   document.getElementById("goalsClose")?.addEventListener("click", closeGoalsModal);
   document.getElementById("goalsCancel")?.addEventListener("click", closeGoalsModal);
   document.getElementById("goalsModal")?.addEventListener("click", (e) => {
     if (e.target.id === "goalsModal") closeGoalsModal();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !document.getElementById("goalsModal").hidden) closeGoalsModal();
+    const modal = document.getElementById("goalsModal");
+    if (e.key === "Escape" && modal && !modal.hidden) closeGoalsModal();
   });
   document.getElementById("goalsForm")?.addEventListener("submit", (e) => {
     e.preventDefault();
-    const f = e.target;
-    const num = (v) => Math.max(0, parseInt(v, 10) || 0);
+    const form = e.target;
+    ensureGroupGoals();
     const goals = STATE.data.goals;
     const a1 = goals.grades.find(g => g.id === "A1");
     const a = goals.grades.find(g => g.id === "A");
-    if (a1) a1.quarterlyTarget = [num(f.a1_t1.value), num(f.a1_t2.value), num(f.a1_t3.value), num(f.a1_t4.value)];
-    if (a) a.quarterlyTarget = [num(f.a_t1.value), num(f.a_t2.value), num(f.a_t3.value), num(f.a_t4.value)];
+    const targets = (prefix) => [
+      readGoalInput(form, `${prefix}_t1`),
+      readGoalInput(form, `${prefix}_t2`),
+      readGoalInput(form, `${prefix}_t3`),
+      readGoalInput(form, `${prefix}_t4`),
+    ];
+    if (a1) a1.quarterlyTarget = targets("a1");
+    if (a) a.quarterlyTarget = targets("a");
     commitChange();
     closeGoalsModal();
   });
   document.getElementById("overview")?.addEventListener("click", (e) => {
-    if (e.target.closest("[data-goal-edit]")) openGoalsModal();
+    if (e.target.closest("[data-goal-edit]")) {
+      e.preventDefault();
+      openGoalsModal();
+    }
   });
   document.getElementById("overview")?.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target.closest("[data-goal-edit]")) {
@@ -1350,13 +1420,13 @@ function debounce(fn, ms) {
 const ACCESS_PASSWORD = "1004";
 let appStarted = false;
 
-function startApp() {
+async function startApp() {
   if (appStarted) return;
   appStarted = true;
   const dark = document.documentElement.classList.contains("dark");
   const themeBtn = document.getElementById("themeToggle");
   if (themeBtn) themeBtn.textContent = dark ? "☀️" : "🌙";
-  init();
+  await init();
 }
 
 function unlockApp() {
@@ -1366,6 +1436,7 @@ function unlockApp() {
 }
 
 function setupLock() {
+  bindGoalsEvents(); // 목표 수정 버튼은 페이지 로드 직후부터 연결
   // 매 접속마다 비밀번호 필요 (대시보드는 잠금 해제 전까지 숨김)
   document.body.classList.add("locked");
   const form = document.getElementById("lockForm");

@@ -366,7 +366,7 @@ tbody tr:last-child td { border-bottom: none; }
 
 /* Modal */
 .modal-overlay {
-  position: fixed; inset: 0; z-index: 100;
+  position: fixed; inset: 0; z-index: 100000;
   background: color-mix(in oklab, #000 45%, transparent);
   display: flex; align-items: flex-start; justify-content: center;
   padding: 4vh 1rem; overflow-y: auto;
