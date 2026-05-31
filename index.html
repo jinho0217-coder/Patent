@@ -49,7 +49,7 @@
       <nav class="nav">
         <span class="nav-label">메뉴</span>
         <a href="#overview" class="active"><span class="ico">▦</span> 대시보드</a>
-        <a href="#analytics"><span class="ico">📊</span> 분석</a>
+        <a href="#partProgress"><span class="ico">📊</span> 파트 분석</a>
         <a href="#list"><span class="ico">▤</span> 특허 목록</a>
         <span class="nav-label">파트</span>
         <div id="companyNav"></div>
@@ -109,7 +109,7 @@
         </section>
 
         <!-- Charts row 2 -->
-        <section class="grid-2">
+        <section class="grid-2" id="partProgress">
           <div class="card">
             <div class="card-head">
               <div><h3>파트별 진행 현황</h3><span class="sub" id="progressSub">파트별 분기 실적·목표</span></div>
@@ -259,6 +259,20 @@
     </div>
   </div>
 
+  <!-- 발명자별 출원 목록 모달 -->
+  <div class="modal-overlay" id="inventorModal" hidden>
+    <div class="modal" style="max-width:520px">
+      <div class="modal-head">
+        <h3><span id="inventorModalName">발명자</span> 출원 목록</h3>
+        <button class="btn icon" id="inventorClose" title="닫기">✕</button>
+      </div>
+      <div class="modal-body inventor-modal-body">
+        <p class="inventor-modal-count" id="inventorModalCount"></p>
+        <ul class="inventor-patent-list" id="inventorPatentList"></ul>
+      </div>
+    </div>
+  </div>
+
   <!-- 파트 지표 입력 모달 -->
   <div class="modal-overlay" id="metricModal" hidden>
     <div class="modal" style="max-width:420px">
@@ -309,6 +323,7 @@
     </div>
   </div>
 
+  <script src="floating-cards.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

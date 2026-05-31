@@ -40,6 +40,24 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+function inventorsOf(patent) {
+  const raw = (patent.inventor || "").trim();
+  if (!raw) return [];
+  return raw.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+}
+
+function patentsByInventor(name) {
+  const n = (name || "").trim();
+  if (!n) return [];
+  return STATE.data.patents.filter(p => inventorsOf(p).includes(n));
+}
+
+function inventorCellHtml(inventor) {
+  const name = (inventor || "").trim();
+  if (!name) return "—";
+  return `<button type="button" class="inventor-link" data-inventor="${esc(name)}" title="${esc(name)} 출원 목록 보기">${esc(name)}</button>`;
+}
+
 const COUNTRY_FLAG = { KR: "🇰🇷", US: "🇺🇸", EP: "🇪🇺", JP: "🇯🇵", CN: "🇨🇳" };
 
 /* ISO 8601 주차 계산 */
@@ -453,10 +471,12 @@ async function init() {
   bindFormEvents();
   bindMetricEvents();
   bindGoalsEvents();
+  bindInventorEvents();
   refreshAll();
   updateDataMeta();
   updateHistButtons();
   applyAccessUI();
+  if (typeof initFloatingCards === "function") initFloatingCards();
 }
 
 /* ---------- 데이터 변경 후 전체 갱신 (분기 그래프 자동 연동) ---------- */
@@ -1037,7 +1057,7 @@ function renderTable() {
       <tr class="${editable ? "row-edit" : ""}" data-id="${esc(p.id)}"${editable ? ' title="클릭하여 수정"' : ""}>
         <td class="mono">${p.id}</td>
         <td class="cell-title">${esc(p.title)}</td>
-        <td>${esc(p.inventor) || "—"}</td>
+        <td class="cell-inventor">${inventorCellHtml(p.inventor)}</td>
         <td><span class="company-tag"><span class="swatch" style="background:${companyColor(p.company)}"></span>${companyName(p.company)}</span></td>
         <td><span class="badge ${p.grade === "A1" ? "primary" : "outline"}">${p.grade || "—"}</span></td>
         <td class="mono">${fmtDate(p.filingDate)}</td>
@@ -1052,6 +1072,11 @@ function renderTable() {
       body.querySelectorAll(".row-del").forEach(btn =>
         btn.addEventListener("click", (e) => { e.stopPropagation(); deletePatent(btn.dataset.id); }));
     }
+    body.querySelectorAll(".inventor-link").forEach(btn =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openInventorModal(btn.dataset.inventor);
+      }));
   }
 
   // "모두 보기" 버튼 표시/문구
@@ -1108,18 +1133,33 @@ function bindEvents() {
     renderTable();
   });
 
-  // 사이드바 active 표시
+  // 사이드바 active 표시 + 앵커 스크롤
   document.querySelectorAll(".nav a[href^='#']").forEach(a => {
     a.addEventListener("click", (e) => {
       document.querySelectorAll(".nav a").forEach(x => x.classList.remove("active"));
       a.classList.add("active");
-      // 대시보드 클릭 시 페이지 최상단으로 스크롤
-      if (a.getAttribute("href") === "#overview") {
+      const href = a.getAttribute("href");
+      if (href === "#overview") {
         e.preventDefault();
         window.scrollTo({ top: 0, behavior: "smooth" });
+      } else if (href === "#partProgress") {
+        e.preventDefault();
+        scrollSectionToTop(document.getElementById("partProgress"));
+      } else if (href === "#list") {
+        e.preventDefault();
+        scrollSectionToTop(document.getElementById("list"));
       }
     });
   });
+}
+
+function scrollSectionToTop(el) {
+  if (!el) return;
+  const topbar = document.querySelector(".topbar");
+  const gap = 8;
+  const offset = topbar ? topbar.getBoundingClientRect().height + gap : gap;
+  const y = el.getBoundingClientRect().top + window.scrollY - offset;
+  window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
 }
 
 /* ---------- 특허 추가/수정/삭제 (직접 입력 → 그래프 자동 연동) ---------- */
@@ -1253,6 +1293,64 @@ function openMetricModal(companyId) {
   document.getElementById("metricModal").hidden = false;
 }
 function closeMetricModal() { document.getElementById("metricModal").hidden = true; }
+
+/* ---------- 발명자별 출원 목록 ---------- */
+function openInventorModal(name) {
+  const n = (name || "").trim();
+  if (!n) return;
+  const modal = document.getElementById("inventorModal");
+  const list = patentsByInventor(n);
+  document.getElementById("inventorModalName").textContent = n;
+  document.getElementById("inventorModalCount").textContent =
+    list.length ? `총 ${list.length}건의 출원` : "등록된 출원이 없습니다.";
+  const ul = document.getElementById("inventorPatentList");
+  if (!list.length) {
+    ul.innerHTML = '<li class="inventor-patent-empty">해당 발명자의 특허가 없습니다.</li>';
+  } else {
+    const editable = canEdit();
+    ul.innerHTML = list
+      .sort((a, b) => String(b.filingDate || "").localeCompare(String(a.filingDate || "")))
+      .map(p => `
+        <li class="inventor-patent-item${editable ? " is-clickable" : ""}" data-id="${esc(p.id)}"${editable ? ' title="클릭하여 수정"' : ""}>
+          <div class="ip-title">${esc(p.title)}</div>
+          <div class="ip-meta">
+            <span>${esc(p.id)}</span>
+            <span>${companyName(p.company)}</span>
+            <span>등급 ${esc(p.grade || "—")}</span>
+            <span>출원 ${fmtDate(p.filingDate)}</span>
+          </div>
+        </li>`).join("");
+    if (editable) {
+      ul.querySelectorAll(".inventor-patent-item.is-clickable").forEach(li => {
+        li.addEventListener("click", () => {
+          const p = STATE.data.patents.find(x => x.id === li.dataset.id);
+          if (p) {
+            closeInventorModal();
+            openModal(p);
+          }
+        });
+      });
+    }
+  }
+  showModal(modal);
+}
+
+function closeInventorModal() {
+  hideModal(document.getElementById("inventorModal"));
+}
+
+function bindInventorEvents() {
+  if (bindInventorEvents._bound) return;
+  bindInventorEvents._bound = true;
+  document.getElementById("inventorClose")?.addEventListener("click", closeInventorModal);
+  document.getElementById("inventorModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "inventorModal") closeInventorModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    const m = document.getElementById("inventorModal");
+    if (e.key === "Escape" && m && !m.hidden) closeInventorModal();
+  });
+}
 
 /* ---------- 그룹 분기별 출원 목표 입력 ---------- */
 function ensureGroupGoals() {
