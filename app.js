@@ -107,6 +107,141 @@ function sumMetric(key) {
   return STATE.data.companies.reduce((s, c) => s + (partMetric(c.id)[key] || 0), 0);
 }
 
+/* ============================================================
+   Supabase 클라우드 동기화
+   - 특허/파트지표를 클라우드 DB에 저장 → 기기/브라우저 간 공유
+   - 네트워크 실패 시 localStorage 캐시로 폴백
+   ============================================================ */
+const SUPABASE_URL = "https://mxwvbrvwrlknbklcuiuj.supabase.co";
+const SUPABASE_KEY = "sb_publishable_tagVH6ooA_ihiaNF8uG72Q_etZiIVkK";
+const SB_REST = SUPABASE_URL + "/rest/v1";
+const SB_HEADERS = {
+  apikey: SUPABASE_KEY,
+  Authorization: "Bearer " + SUPABASE_KEY,
+  "Content-Type": "application/json",
+};
+
+function rowToPatent(r) {
+  return {
+    id: r.id,
+    title: r.title || "",
+    inventor: r.inventor || "",
+    company: r.company || "",
+    grade: r.grade || "",
+    status: r.status || "pending",
+    filingDate: r.filing_date || null,
+    field: "", country: "KR", appNo: null, regDate: null, regNo: null,
+  };
+}
+function patentToRow(p) {
+  return {
+    id: p.id,
+    title: p.title || null,
+    inventor: p.inventor || null,
+    company: p.company || null,
+    grade: p.grade || null,
+    status: p.status || "pending",
+    filing_date: p.filingDate || null,
+  };
+}
+
+async function cloudLoadPatents() {
+  const res = await fetch(`${SB_REST}/patents?select=*&order=filing_date.desc`, { headers: SB_HEADERS });
+  if (!res.ok) throw new Error("load patents " + res.status);
+  return (await res.json()).map(rowToPatent);
+}
+async function cloudLoadMetrics() {
+  const res = await fetch(`${SB_REST}/part_metrics?select=*`, { headers: SB_HEADERS });
+  if (!res.ok) throw new Error("load metrics " + res.status);
+  const out = {};
+  (await res.json()).forEach(r => {
+    out[r.company_id] = {
+      pending: r.pending || 0, disclosure: r.disclosure || 0, idea: r.idea || 0,
+      target: [r.t1 || 0, r.t2 || 0, r.t3 || 0, r.t4 || 0],
+    };
+  });
+  return out;
+}
+async function cloudSavePatents(list) {
+  const rows = list.filter(p => p.id).map(patentToRow);
+  if (rows.length) {
+    const res = await fetch(`${SB_REST}/patents`, {
+      method: "POST",
+      headers: { ...SB_HEADERS, Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(rows),
+    });
+    if (!res.ok) throw new Error("upsert patents " + res.status + " " + (await res.text()));
+  }
+  // 현재 목록에 없는 행은 클라우드에서 삭제
+  const ids = rows.map(r => `"${encodeURIComponent(r.id)}"`);
+  const url = ids.length
+    ? `${SB_REST}/patents?id=not.in.(${ids.join(",")})`
+    : `${SB_REST}/patents?id=not.is.null`;
+  const del = await fetch(url, { method: "DELETE", headers: SB_HEADERS });
+  if (!del.ok) throw new Error("delete patents " + del.status);
+}
+async function cloudSaveMetrics(map) {
+  const rows = Object.entries(map).map(([cid, m]) => ({
+    company_id: cid,
+    pending: m.pending || 0, disclosure: m.disclosure || 0, idea: m.idea || 0,
+    t1: (m.target || [])[0] || 0, t2: (m.target || [])[1] || 0,
+    t3: (m.target || [])[2] || 0, t4: (m.target || [])[3] || 0,
+  }));
+  if (!rows.length) return;
+  const res = await fetch(`${SB_REST}/part_metrics`, {
+    method: "POST",
+    headers: { ...SB_HEADERS, Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(rows),
+  });
+  if (!res.ok) throw new Error("upsert metrics " + res.status + " " + (await res.text()));
+}
+
+// 초기 클라우드 로드. 클라우드가 비어있고 로컬 데이터가 있으면 1회 업로드(이전).
+async function cloudInit() {
+  try {
+    const [patents, metrics] = await Promise.all([cloudLoadPatents(), cloudLoadMetrics()]);
+    const cloudEmpty = patents.length === 0 && Object.keys(metrics).length === 0;
+    const localPatents = loadSavedPatents();
+    const hasLocal = (localPatents && localPatents.length) ||
+      Object.values(STATE.partMetrics).some(m => m.pending || m.disclosure || m.idea || (m.target || []).some(Boolean));
+    if (cloudEmpty && hasLocal) {
+      if (localPatents) STATE.data.patents = localPatents;
+      await syncCloud();                 // 기존 로컬 데이터를 클라우드로 이전
+    } else {
+      STATE.data.patents = patents;
+      STATE.data.companies.forEach(c => { if (metrics[c.id]) STATE.partMetrics[c.id] = metrics[c.id]; });
+    }
+    STATE.cloudOk = true;
+  } catch (e) {
+    console.warn("클라우드 연결 실패 → 로컬 데이터 사용:", e);
+    const localPatents = loadSavedPatents();
+    if (localPatents) STATE.data.patents = localPatents;
+    STATE.cloudOk = false;
+  }
+  updateCloudStatus();
+}
+
+// 현재 상태 전체를 클라우드에 반영 (비동기, 실패해도 UI 유지)
+async function syncCloud() {
+  if (!SUPABASE_URL) return;
+  try {
+    await cloudSavePatents(STATE.data.patents);
+    await cloudSaveMetrics(STATE.partMetrics);
+    STATE.cloudOk = true;
+  } catch (e) {
+    console.warn("클라우드 저장 실패:", e);
+    STATE.cloudOk = false;
+  }
+  updateCloudStatus();
+}
+
+function updateCloudStatus() {
+  const el = document.getElementById("cloudStatus");
+  if (!el) return;
+  if (STATE.cloudOk) { el.textContent = "● 클라우드 동기화됨"; el.style.color = "var(--chart-1)"; }
+  else { el.textContent = "● 오프라인 (로컬 저장)"; el.style.color = "var(--muted-foreground)"; }
+}
+
 /* ---------- 버전 히스토리 (3단계 되돌리기/앞으로) ---------- */
 const STORAGE_KEY_HISTORY = "amd_history_v1";
 const HISTORY_MAX = 4; // 현재 + 3단계 이전
@@ -164,6 +299,7 @@ function commitChange() {
   refreshAll();
   updateDataMeta();
   updateHistButtons();
+  syncCloud();
 }
 function applySnapshot(snap) {
   STATE.data.patents = JSON.parse(JSON.stringify(snap.patents));
@@ -173,6 +309,7 @@ function applySnapshot(snap) {
   refreshAll();
   updateDataMeta();
   updateHistButtons();
+  syncCloud();
 }
 function undoChange() {
   if (STATE.histIndex <= 0) return;
@@ -207,12 +344,16 @@ async function init() {
   const data = await loadData();
   if (!data) return;
   STATE.data = data;
-  // 사용자가 직접 입력해 저장한 데이터가 있으면 우선 사용
-  const saved = loadSavedPatents();
-  if (saved) data.patents = saved;
   data.companies.forEach(c => STATE.companyMap[c.id] = c);
   data.statusMeta.forEach(s => STATE.statusMap[s.id] = s);
   STATE.partMetrics = loadPartMetrics();
+  // 클라우드(Supabase)에서 공용 데이터 로드 (실패 시 로컬 캐시 사용)
+  await cloudInit();
+  // 클라우드가 정상이면 클라우드 상태를 기준으로 히스토리를 새로 시작
+  if (STATE.cloudOk) {
+    STATE.history = []; STATE.histIndex = -1;
+    try { localStorage.removeItem(STORAGE_KEY_HISTORY); } catch {}
+  }
   initHistory();
 
   // 헤더 정보
