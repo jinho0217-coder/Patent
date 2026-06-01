@@ -1647,7 +1647,16 @@ function openMetricModal(companyId) {
   form.t2.value = m.target[1] || 0;
   form.t3.value = m.target[2] || 0;
   form.t4.value = m.target[3] || 0;
-  form.querySelectorAll("input[type=number]").forEach(inp => { inp.disabled = ro; });
+  // 목표(A1·전체 분기 목표)는 편집(1144) 권한만 수정 가능. 4001(파트)은 실적만 입력
+  const canEditTargets = canEdit();
+  const targetNames = ["a1t1", "a1t2", "a1t3", "a1t4", "t1", "t2", "t3", "t4"];
+  form.querySelectorAll("input[type=number]").forEach(inp => {
+    const isTarget = targetNames.includes(inp.name);
+    inp.disabled = ro || (isTarget && !canEditTargets);
+  });
+  form.querySelectorAll(".metric-target-section").forEach(sec => {
+    sec.classList.toggle("is-readonly", !canEditTargets);
+  });
   const submitBtn = document.getElementById("metricSubmit");
   if (submitBtn) submitBtn.hidden = ro;
   fillMetricA1Summary(companyId);
@@ -1846,12 +1855,19 @@ function bindMetricEvents() {
     const id = f.companyId.value;
     const num = (v) => Math.max(0, parseInt(v, 10) || 0);
     const prev = partMetric(id);
+    // 목표는 편집(1144) 권한만 변경 가능. 그 외(4001)는 기존 목표 유지
+    const a1Target = canEdit()
+      ? [num(f.a1t1.value), num(f.a1t2.value), num(f.a1t3.value), num(f.a1t4.value)]
+      : (prev.a1Target || [0, 0, 0, 0]).slice();
+    const target = canEdit()
+      ? [num(f.t1.value), num(f.t2.value), num(f.t3.value), num(f.t4.value)]
+      : (prev.target || [0, 0, 0, 0]).slice();
     STATE.partMetrics[id] = {
       pending: num(f.pending.value),
       disclosure: num(f.disclosure.value),
       idea: num(f.idea.value),
-      a1Target: [num(f.a1t1.value), num(f.a1t2.value), num(f.a1t3.value), num(f.a1t4.value)],
-      target: [num(f.t1.value), num(f.t2.value), num(f.t3.value), num(f.t4.value)],
+      a1Target,
+      target,
       names: normalizeNames(prev.names),
     };
     commitChange();

@@ -544,6 +544,13 @@ tbody tr:last-child td { border-bottom: none; }
 /* 모달 안에서는 입력칸이 그리드 폭에 맞게 줄어들도록 */
 .modal .input, .modal select.input { min-width: 0; width: 100%; }
 .metric-section-title { font-size: 0.82rem; font-weight: 700; margin: 1.1rem 0 0.6rem; color: var(--foreground); }
+.metric-target-lock {
+  display: none; margin-left: 0.4rem; font-size: 0.68rem; font-weight: 600;
+  color: var(--muted-foreground); background: var(--muted);
+  padding: 0.05rem 0.4rem; border-radius: 999px; vertical-align: middle;
+}
+.metric-target-section.is-readonly { opacity: 0.6; }
+.metric-target-section.is-readonly .metric-target-lock { display: inline-block; }
 .metric-a1-summary {
   display: flex; flex-direction: column; gap: 0.4rem;
   padding: 0.75rem 0.9rem; margin-bottom: 0.85rem;
