@@ -1054,11 +1054,17 @@ function renderProgressChart() {
     const hasA1Target = a1Target.some(v => v > 0);
     const cap = (arr) => arr.map((v, i) => (i < maxQ ? v : null));
 
-    // 메타: 연간 실적/목표 (달성률)
+    // 메타: A1 실적/목표 + 전체 실적/목표 (그래프의 A1 목표선과 일치)
     const annual = target[target.length - 1] || 0;
     const done = g.a1[3] + g.a[3];
+    const a1Done = g.a1[3];
+    const a1Annual = a1Target[a1Target.length - 1] || 0;
     const meta = document.getElementById("meta_" + c.id);
-    if (meta) meta.textContent = annual ? `${done}/${annual} · ${Math.round((done / annual) * 100)}%` : `${done}건`;
+    if (meta) {
+      const a1Txt = a1Annual ? `A1 ${a1Done}/${a1Annual}` : `A1 ${a1Done}`;
+      const allTxt = annual ? `전체 ${done}/${annual}` : `전체 ${done}`;
+      meta.textContent = `${a1Txt} · ${allTxt}`;
+    }
     // 현재 분기 누적 기준 목표 미달이면 그래프 외곽에 빨간 테두리
     const qi = Math.max(0, maxQ - 1);
     const doneCurQ = g.a1[qi] + g.a[qi];
@@ -1194,7 +1200,7 @@ function renderCompanyBars() {
       const share = total ? Math.round((v / total) * 100) : 0;
       const canEditCat = cat.key !== "patent" && editable;
       const cls = `seg seg-people${canEditCat ? " seg-editable" : ""}`;
-      return `<div class="${cls}" style="width:${w}%;background:${cssVar(cat.color)}" data-company="${c.id}" data-cat="${cat.key}" title="${cat.label} ${v}건 (${share}%)"><span class="seg-num">${v}</span></div>`;
+      return `<div class="${cls}" style="width:${w}%;background:${cssVar(cat.color)}" data-company="${c.id}" data-cat="${cat.key}" aria-label="${cat.label} ${v}건 (${share}%)"><span class="seg-num">${v}</span></div>`;
     }).join("");
     const breakdown = PORTFOLIO_CATS.filter(cat => vals[cat.key])
       .map(cat => `${cat.label} ${vals[cat.key]}`).join(" · ") || "데이터 없음";
@@ -1254,16 +1260,25 @@ function hideBarPeoplePopover() {
   if (el) el.hidden = true;
 }
 
+// 이벤트 위임: #companyBars 재렌더와 무관하게 한 번만 바인딩
 function bindBarPeopleEvents() {
-  document.querySelectorAll("#companyBars .seg-people").forEach(seg => {
-    seg.addEventListener("mouseenter", () => showBarPeoplePopover(seg));
-    seg.addEventListener("mouseleave", hideBarPeoplePopover);
-    if (seg.classList.contains("seg-editable")) {
-      seg.addEventListener("click", () => {
-        hideBarPeoplePopover();
-        openPeopleModal(seg.dataset.company, seg.dataset.cat);
-      });
-    }
+  const wrap = document.getElementById("companyBars");
+  if (!wrap || wrap.dataset.peopleBound) return;
+  wrap.dataset.peopleBound = "1";
+  wrap.addEventListener("mouseover", (e) => {
+    const seg = e.target.closest(".seg-people");
+    if (seg && wrap.contains(seg)) showBarPeoplePopover(seg);
+  });
+  wrap.addEventListener("mouseout", (e) => {
+    const seg = e.target.closest(".seg-people");
+    const to = e.relatedTarget;
+    if (seg && (!to || !seg.contains(to))) hideBarPeoplePopover();
+  });
+  wrap.addEventListener("click", (e) => {
+    const seg = e.target.closest(".seg-editable");
+    if (!seg || !wrap.contains(seg)) return;
+    hideBarPeoplePopover();
+    openPeopleModal(seg.dataset.company, seg.dataset.cat);
   });
 }
 
