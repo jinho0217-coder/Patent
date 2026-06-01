@@ -1589,6 +1589,7 @@ function renderMetricPatentList(companyId) {
       <div class="ip-title">${esc(p.title)}</div>
       <div class="ip-meta">
         <span>${esc(p.id)}</span>
+        <span>발명자 ${esc((p.inventor || "").trim() || "—")}</span>
         <span>등급 ${esc(p.grade || "—")}</span>
         <span>${statusLabel(p.status)}</span>
         <span>출원 ${fmtDate(p.filingDate)}</span>
