@@ -1066,21 +1066,24 @@ function renderProgressChart() {
       meta.textContent = `${a1Txt} · ${allTxt}`;
     }
     // 분기별 목표 미달 여부 (현재 분기까지, 누적 실적 < 누적 목표)
+    // A1 막대 = A1 목표 기준 / A(전체) 막대 = 전체 목표 기준
     const RED = chartColor("--destructive") || "oklch(0.5386 0.1937 26.7249)";
-    const belowAt = (i) => i < maxQ && hasTarget && ((g.a1[i] + g.a[i]) < (target[i] || 0));
-    const a1Border = labels.map((_, i) => belowAt(i) ? RED : a1Color);
-    const aBorder = labels.map((_, i) => belowAt(i) ? RED : aColor);
-    const borderW = labels.map((_, i) => belowAt(i) ? 2 : 1);
+    const belowA1 = (i) => i < maxQ && hasA1Target && (g.a1[i] < (a1Target[i] || 0));
+    const belowAll = (i) => i < maxQ && hasTarget && ((g.a1[i] + g.a[i]) < (target[i] || 0));
+    const a1Border = labels.map((_, i) => belowA1(i) ? RED : a1Color);
+    const a1BorderW = labels.map((_, i) => belowA1(i) ? 2 : 1);
+    const aBorder = labels.map((_, i) => belowAll(i) ? RED : aColor);
+    const aBorderW = labels.map((_, i) => belowAll(i) ? 2 : 1);
 
     const datasets = [
       {
         type: "bar", label: "A1", data: cap(g.a1),
-        backgroundColor: a1Color, borderColor: a1Border, borderWidth: borderW,
+        backgroundColor: a1Color, borderColor: a1Border, borderWidth: a1BorderW,
         stack: "ach", borderRadius: 2, borderSkipped: false,
       },
       {
         type: "bar", label: "A", data: cap(g.a),
-        backgroundColor: withAlpha(aColor, 0.55), borderColor: aBorder, borderWidth: borderW,
+        backgroundColor: withAlpha(aColor, 0.55), borderColor: aBorder, borderWidth: aBorderW,
         stack: "ach", borderRadius: 2, borderSkipped: false,
       },
     ];
