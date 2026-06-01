@@ -655,13 +655,27 @@ function kpiHTML(icon, label, value, extra, editable, variant) {
 }
 
 /* ---------- 목표 달성 계산 (리스트 데이터 기반, 자동 연동) ---------- */
-function quarterOf(dateStr) { return Math.floor(new Date(dateStr).getMonth() / 3) + 1; }
+/* 회계 분기: ISO(달력) 기준에서 1개월 당김
+   1분기 = 12월~2월 / 2분기 = 3월~5월 / 3분기 = 6월~8월 / 4분기 = 9월~11월
+   12월은 다음 회계연도 1분기에 속한다. */
+function fiscalQuarterInfo(dateStr) {
+  const d = new Date(dateStr);
+  const m = d.getMonth(); // 0(1월) ~ 11(12월)
+  const y = d.getFullYear();
+  if (m === 11) return { fy: y + 1, q: 1 }; // 12월 → 다음 해 1분기
+  if (m <= 1) return { fy: y, q: 1 };       // 1~2월
+  if (m <= 4) return { fy: y, q: 2 };       // 3~5월
+  if (m <= 7) return { fy: y, q: 3 };       // 6~8월
+  return { fy: y, q: 4 };                    // 9~11월
+}
+function quarterOf(dateStr) { return fiscalQuarterInfo(dateStr).q; }
+function fiscalYearOf(dateStr) { return fiscalQuarterInfo(dateStr).fy; }
 
 function currentQuarterForYear(year) {
-  const now = new Date();
-  if (now.getFullYear() > year) return 4;
-  if (now.getFullYear() < year) return 0;
-  return Math.floor(now.getMonth() / 3) + 1;
+  const { fy, q } = fiscalQuarterInfo(new Date());
+  if (fy > year) return 4;
+  if (fy < year) return 0;
+  return q;
 }
 
 // A 등급은 전체 특허, A1 등급은 grade가 "A1"인 특허를 집계
@@ -672,9 +686,10 @@ function gradeAchievement(gradeId) {
   const perQ = [0, 0, 0, 0];
   STATE.data.patents.forEach(p => {
     if (!p.filingDate) return;
-    if (new Date(p.filingDate).getFullYear() !== year) return;
+    const { fy, q } = fiscalQuarterInfo(p.filingDate);
+    if (fy !== year) return;
     if (!matchGrade(p, gradeId)) return;
-    perQ[quarterOf(p.filingDate) - 1]++;
+    perQ[q - 1]++;
   });
   const cum = []; let s = 0;
   for (let i = 0; i < 4; i++) { s += perQ[i]; cum.push(s); }
@@ -940,8 +955,10 @@ function partQuarterlyCum(companyId) {
   const perQ = [0, 0, 0, 0];
   STATE.data.patents.forEach(p => {
     if (p.company !== companyId) return;
-    if (!p.filingDate || new Date(p.filingDate).getFullYear() !== year) return;
-    perQ[quarterOf(p.filingDate) - 1]++;
+    if (!p.filingDate) return;
+    const { fy, q } = fiscalQuarterInfo(p.filingDate);
+    if (fy !== year) return;
+    perQ[q - 1]++;
   });
   const cum = []; let s = 0;
   for (let i = 0; i < 4; i++) { s += perQ[i]; cum.push(s); }
@@ -954,9 +971,10 @@ function partQuarterlyCumByGrade(companyId) {
   const a1 = [0, 0, 0, 0], a = [0, 0, 0, 0];
   STATE.data.patents.forEach(p => {
     if (p.company !== companyId) return;
-    if (!p.filingDate || new Date(p.filingDate).getFullYear() !== year) return;
-    const q = quarterOf(p.filingDate) - 1;
-    if (p.grade === "A1") a1[q]++; else a[q]++;
+    if (!p.filingDate) return;
+    const { fy, q } = fiscalQuarterInfo(p.filingDate);
+    if (fy !== year) return;
+    if (p.grade === "A1") a1[q - 1]++; else a[q - 1]++;
   });
   const cum = (arr) => { const o = []; let s = 0; for (let i = 0; i < 4; i++) { s += arr[i]; o.push(s); } return o; };
   return { a1: cum(a1), a: cum(a) };
@@ -1001,7 +1019,7 @@ function renderProgressChart() {
   const aColor = chartColor("--chart-1"); // 초록 = A (모든 파트 공통, NE 색상)
 
   const subEl = document.getElementById("progressSub");
-  if (subEl) subEl.textContent = `${goals.year}년 · 파트별 분기 누적 (■ A1 진한초록 / ■ A 초록 / ┄ 목표)`;
+  if (subEl) subEl.textContent = `${goals.year}년 · 파트별 분기 누적 (■ A1 진한초록 / ■ A 초록 / ┄ 전체목표 / ┄ A1목표)`;
 
   // 각 파트 카드 DOM 생성
   grid.innerHTML = STATE.data.companies.map(c => `
@@ -1015,8 +1033,11 @@ function renderProgressChart() {
 
   STATE.data.companies.forEach(c => {
     const g = partQuarterlyCumByGrade(c.id);
-    const target = partMetric(c.id).target;
+    const m = partMetric(c.id);
+    const target = m.target;
+    const a1Target = m.a1Target || [0, 0, 0, 0];
     const hasTarget = target.some(v => v > 0);
+    const hasA1Target = a1Target.some(v => v > 0);
     const cap = (arr) => arr.map((v, i) => (i < maxQ ? v : null));
 
     // 메타: 연간 실적/목표 (달성률)
@@ -1043,9 +1064,17 @@ function renderProgressChart() {
         stack: "ach", borderRadius: 2, borderSkipped: false,
       },
     ];
+    if (hasA1Target) {
+      datasets.push({
+        type: "line", label: "A1 목표", data: a1Target,
+        borderColor: a1Color, backgroundColor: "transparent",
+        borderWidth: 1.5, borderDash: [3, 3], tension: 0,
+        pointStyle: "triangle", pointRadius: 3, fill: false,
+      });
+    }
     if (hasTarget) {
       datasets.push({
-        type: "line", label: "목표", data: target,
+        type: "line", label: "전체 목표", data: target,
         borderColor: cssVar("--muted-foreground"), backgroundColor: "transparent",
         borderWidth: 1.5, borderDash: [4, 3], tension: 0,
         pointStyle: "rectRot", pointRadius: 2.5, fill: false,
