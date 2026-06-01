@@ -22,6 +22,7 @@
   "companies": [
     { "id": "ne", "name": "NE", "color": "chart-1" },
     { "id": "package", "name": "패키지", "color": "chart-2" },
+    { "id": "hinge-lab", "name": "Hinge Lab.", "color": "chart-7" },
     { "id": "cmf1", "name": "선행CMF1", "color": "chart-3" },
     { "id": "cmf2", "name": "선행CMF2", "color": "chart-4" },
     { "id": "cmf3", "name": "선행CMF3", "color": "chart-5" },

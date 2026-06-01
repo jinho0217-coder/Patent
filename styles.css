@@ -27,6 +27,7 @@
   --chart-4: oklch(0.4254 0.1159 144.3078);
   --chart-5: oklch(0.2157 0.0453 145.7256);
   --chart-6: oklch(0.6450 0.1100 170.0000);
+  --chart-7: oklch(0.6200 0.1450 55.0000);
   --sidebar: oklch(0.9370 0.0142 74.4218);
   --sidebar-foreground: oklch(0.3000 0.0358 30.2042);
   --sidebar-primary: oklch(0.5234 0.1347 144.1672);
@@ -75,6 +76,7 @@
   --chart-4: oklch(0.6291 0.1543 144.2031);
   --chart-5: oklch(0.5752 0.1446 144.1813);
   --chart-6: oklch(0.7400 0.1200 170.0000);
+  --chart-7: oklch(0.7200 0.1300 55.0000);
   --sidebar: oklch(0.2683 0.0279 150.7681);
   --sidebar-foreground: oklch(0.9423 0.0097 72.6595);
   --sidebar-primary: oklch(0.6731 0.1624 144.2083);
@@ -500,6 +502,16 @@ tbody tr:last-child td { border-bottom: none; }
 /* 모달 안에서는 입력칸이 그리드 폭에 맞게 줄어들도록 */
 .modal .input, .modal select.input { min-width: 0; width: 100%; }
 .metric-section-title { font-size: 0.82rem; font-weight: 700; margin: 1.1rem 0 0.6rem; color: var(--foreground); }
+.metric-a1-summary {
+  display: flex; flex-wrap: wrap; gap: 0.65rem 1.25rem;
+  padding: 0.75rem 0.9rem; margin-bottom: 0.85rem;
+  background: var(--muted); border-radius: var(--radius);
+  font-size: 0.84rem; color: var(--muted-foreground);
+}
+.metric-a1-summary strong { color: var(--foreground); font-weight: 700; }
+.metric-patent-count { font-size: 0.82rem; color: var(--muted-foreground); margin: 0 0 0.5rem; }
+.metric-patent-list { max-height: 220px; margin-bottom: 0.5rem; }
+.metric-modal .modal-body { max-height: min(85vh, 720px); overflow-y: auto; }
 .form-hint { font-size: 0.75rem; color: var(--muted-foreground); margin: 0.75rem 0 0; line-height: 1.4; }
 .access-badge {
   display: inline-block;
@@ -511,6 +523,7 @@ tbody tr:last-child td { border-bottom: none; }
   margin-left: 0.35rem;
 }
 .access-badge.edit { background: var(--accent); color: var(--accent-foreground); }
+.access-badge.part { background: var(--chart-3); color: #fff; }
 .access-badge.view { background: var(--muted); color: var(--muted-foreground); }
 body.readonly-mode tr.row-edit { cursor: default; }
 body.readonly-mode .col-actions { width: 0; padding: 0; border: none; }

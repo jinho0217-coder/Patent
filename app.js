@@ -14,19 +14,38 @@ const STATE = {
   history: [],      // 데이터 수정 스냅샷 (현재 + 최대 3단계 이전)
   histIndex: -1,
   showAll: false,   // 특허 목록 전체 표시 여부
-  accessRole: null, // 'edit' | 'view' (비밀번호 로그인 후)
+  accessRole: null, // 'edit' | 'view' | 'part' (비밀번호 로그인 후)
 };
 
 const ACCESS_EDIT = "1144";
 const ACCESS_VIEW = "1004";
+const ACCESS_PART = "4001";
 function canEdit() { return STATE.accessRole === "edit"; }
+function canEditPart() { return STATE.accessRole === "edit" || STATE.accessRole === "part"; }
 
 /* ---------- 유틸 ---------- */
 function cssVar(name) {
-  return getComputedStyle(document.body).getPropertyValue(name).trim();
+  const key = name.startsWith("--") ? name : `--${name}`;
+  return getComputedStyle(document.documentElement).getPropertyValue(key).trim();
+}
+function chartColor(token) {
+  const key = token.startsWith("--") ? token : `--${token}`;
+  const v = cssVar(key);
+  if (v) return v;
+  const fallbacks = {
+    "--chart-1": "oklch(0.6731 0.1624 144.2083)",
+    "--chart-3": "oklch(0.5234 0.1347 144.1672)",
+    "--chart-5": "oklch(0.2157 0.0453 145.7256)",
+    "--chart-7": "oklch(0.6200 0.1450 55.0000)",
+    "--accent": "oklch(0.8952 0.0504 146.0366)",
+  };
+  return fallbacks[key] || "oklch(0.52 0.13 144)";
 }
 function companyName(id) { return STATE.companyMap[id]?.name || id; }
-function companyColor(id) { return cssVar("--" + (STATE.companyMap[id]?.color || "chart-1")); }
+function companyColor(id) {
+  const c = STATE.companyMap[id]?.color || "chart-1";
+  return chartColor(`--${c}`);
+}
 function statusLabel(id) { return STATE.statusMap[id]?.label || id; }
 function withAlpha(oklchStr, a) {
   // "oklch(0.52 0.13 144)" -> "oklch(0.52 0.13 144 / a)"
@@ -108,7 +127,9 @@ function savePatents() {
 
 /* ---------- 파트별 지표(심사중/직발서/아이디어/분기목표) 저장 ---------- */
 const STORAGE_KEY_METRICS = "amd_part_metrics_v1";
-function emptyMetric() { return { pending: 0, disclosure: 0, idea: 0, target: [0, 0, 0, 0] }; }
+function emptyMetric() {
+  return { pending: 0, disclosure: 0, idea: 0, target: [0, 0, 0, 0], a1Target: [0, 0, 0, 0] };
+}
 function loadPartMetrics() {
   let saved = {};
   try {
@@ -119,6 +140,7 @@ function loadPartMetrics() {
   STATE.data.companies.forEach(c => {
     out[c.id] = Object.assign(emptyMetric(), saved[c.id] || {});
     if (!Array.isArray(out[c.id].target)) out[c.id].target = [0, 0, 0, 0];
+    if (!Array.isArray(out[c.id].a1Target)) out[c.id].a1Target = [0, 0, 0, 0];
   });
   return out;
 }
@@ -211,6 +233,7 @@ async function cloudLoadMetrics() {
     out[r.company_id] = {
       pending: r.pending || 0, disclosure: r.disclosure || 0, idea: r.idea || 0,
       target: [r.t1 || 0, r.t2 || 0, r.t3 || 0, r.t4 || 0],
+      a1Target: [r.a1_t1 || 0, r.a1_t2 || 0, r.a1_t3 || 0, r.a1_t4 || 0],
     };
   });
   return out;
@@ -239,6 +262,8 @@ async function cloudSaveMetrics(map) {
     pending: m.pending || 0, disclosure: m.disclosure || 0, idea: m.idea || 0,
     t1: (m.target || [])[0] || 0, t2: (m.target || [])[1] || 0,
     t3: (m.target || [])[2] || 0, t4: (m.target || [])[3] || 0,
+    a1_t1: (m.a1Target || [])[0] || 0, a1_t2: (m.a1Target || [])[1] || 0,
+    a1_t3: (m.a1Target || [])[2] || 0, a1_t4: (m.a1Target || [])[3] || 0,
   }));
   if (!rows.length) return;
   const res = await fetch(`${SB_REST}/part_metrics`, {
@@ -299,7 +324,9 @@ async function cloudInit() {
       await syncCloud();
     } else {
       STATE.data.patents = patents;
-      STATE.data.companies.forEach(c => { if (metrics[c.id]) STATE.partMetrics[c.id] = metrics[c.id]; });
+      STATE.data.companies.forEach(c => {
+        if (metrics[c.id]) STATE.partMetrics[c.id] = Object.assign(emptyMetric(), STATE.partMetrics[c.id], metrics[c.id]);
+      });
       if (cloudGoals) applyGroupGoals(cloudGoals);
       else if (localGoals) applyGroupGoals(localGoals);
     }
@@ -320,9 +347,13 @@ async function cloudInit() {
 async function syncCloud() {
   if (!SUPABASE_URL) return;
   try {
-    await cloudSavePatents(STATE.data.patents);
-    await cloudSaveMetrics(STATE.partMetrics);
-    await cloudSaveGroupGoals();
+    if (canEdit()) {
+      await cloudSavePatents(STATE.data.patents);
+      await cloudSaveMetrics(STATE.partMetrics);
+      await cloudSaveGroupGoals();
+    } else if (canEditPart()) {
+      await cloudSaveMetrics(STATE.partMetrics);
+    }
     STATE.cloudOk = true;
   } catch (e) {
     console.warn("클라우드 저장 실패:", e);
@@ -377,10 +408,16 @@ function dateKey(iso) {
 
 // 데이터 변경 확정 → "수정일(날짜)" 기준 스냅샷 기록
 function commitChange() {
-  if (!canEdit()) return;
-  savePatents();
-  savePartMetrics();
-  saveGroupGoals();
+  const full = canEdit();
+  const partOnly = canEditPart() && !full;
+  if (!full && !partOnly) return;
+  if (full) {
+    savePatents();
+    savePartMetrics();
+    saveGroupGoals();
+  } else {
+    savePartMetrics();
+  }
   const snap = cloneSnapshot();               // savedAt = 현재 시각
   const today = dateKey(snap.savedAt);
   STATE.history = STATE.history.slice(0, STATE.histIndex + 1); // redo 분기 제거
@@ -401,6 +438,7 @@ function commitChange() {
   syncCloud();
 }
 function applySnapshot(snap) {
+  if (!canEdit()) return;
   STATE.data.patents = JSON.parse(JSON.stringify(snap.patents));
   STATE.partMetrics = JSON.parse(JSON.stringify(snap.partMetrics));
   if (snap.goals) applyGroupGoals(snap.goals);
@@ -490,23 +528,34 @@ function refreshAll() {
 }
 
 /* ---------- 사이드바 파트 (클릭 시 지표 입력) ---------- */
+function partA1Progress(companyId) {
+  const g = partQuarterlyCumByGrade(companyId);
+  const m = partMetric(companyId);
+  const a1Target = m.a1Target || [0, 0, 0, 0];
+  const done = g.a1[3];
+  const annual = a1Target[a1Target.length - 1] || 0;
+  const pct = annual ? Math.round((done / annual) * 100) : null;
+  return { done, annual, pct };
+}
+
 function buildCompanyNav() {
   const wrap = document.getElementById("companyNav");
-  const editable = canEdit();
+  const editable = canEditPart();
   wrap.innerHTML = STATE.data.companies.map(c => {
-    const m = partMetric(c.id);
-    const annual = m.target[m.target.length - 1] || 0;
-    const done = partQuarterlyCum(c.id)[3];
-    const badge = annual ? `${done}/${annual}` : `${done}`;
+    const a1 = partA1Progress(c.id);
+    const badge = a1.annual
+      ? `A1 ${a1.done}/${a1.annual} (${a1.pct}%)`
+      : `A1 ${a1.done}`;
+    const icoColor = chartColor(`--${c.color}`);
     return `
-    <a href="#" data-company="${c.id}" title="${editable ? "클릭하여 지표 입력" : "보기 전용"}">
-      <span class="ico" style="color:${cssVar("--" + c.color)}">●</span>
+    <a href="#" data-company="${c.id}" title="${STATE.accessRole ? "클릭하여 파트 상세 보기" : "로그인 필요"}">
+      <span class="ico" style="color:${icoColor}">●</span>
       ${c.name}
       ${editable ? '<span class="part-edit">✎</span>' : ""}
-      <span style="margin-left:auto;color:var(--muted-foreground);font-size:.78rem">${badge}</span>
+      <span style="margin-left:auto;color:var(--muted-foreground);font-size:.78rem" title="A1 달성/목표">${badge}</span>
     </a>`;
   }).join("");
-  if (!editable) return;
+  if (!STATE.accessRole) return;
   wrap.querySelectorAll("a").forEach(a => {
     a.addEventListener("click", (e) => {
       e.preventDefault();
@@ -749,49 +798,114 @@ const doughnutValueLabel = {
   afterDatasetsDraw(chart) {
     const meta = chart.getDatasetMeta(0);
     const ds = chart.data.datasets[0];
+    if (!meta?.data?.length) return;
     const ctx = chart.ctx;
+    const total = ds.data.reduce((s, v) => s + (Number(v) || 0), 0);
     meta.data.forEach((arc, i) => {
-      const val = ds.data[i];
-      if (!val) return;
+      const val = Number(ds.data[i]) || 0;
+      if (val <= 0 || !arc) return;
       const pos = arc.tooltipPosition();
+      const pct = total ? Math.round((val / total) * 100) : 0;
+      const text = val >= 3 || pct >= 8 ? String(val) : `${val}`;
       ctx.save();
-      ctx.font = `bold 13px ${cssVar("--font-sans") || "sans-serif"}`;
+      ctx.font = `bold 12px ${cssVar("--font-sans") || "sans-serif"}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.lineWidth = 3;
-      ctx.strokeStyle = "rgba(0,0,0,0.35)";
-      ctx.strokeText(String(val), pos.x, pos.y);
+      ctx.strokeStyle = "rgba(0,0,0,0.4)";
+      ctx.strokeText(text, pos.x, pos.y);
       ctx.fillStyle = "#fff";
-      ctx.fillText(String(val), pos.x, pos.y);
+      ctx.fillText(text, pos.x, pos.y);
       ctx.restore();
     });
   },
 };
+if (typeof Chart !== "undefined") Chart.register(doughnutValueLabel);
+
+// 그룹 상태별 분포 — 포트폴리오 「특허」 건수 = 등록(출원) 조각
+const STATUS_CHART_COLORS = [
+  "oklch(0.6731 0.1624 144.2083)",
+  "oklch(0.5234 0.1347 144.1672)",
+  "oklch(0.2157 0.0453 145.7256)",
+  "oklch(0.8952 0.0504 146.0366)",
+];
+function groupPatentCount() {
+  if (!STATE.data?.companies) return (STATE.data?.patents || []).length;
+  return STATE.data.companies.reduce(
+    (s, c) => s + STATE.data.patents.filter(p => p.company === c.id).length, 0);
+}
+const STATUS_CATS = [
+  { label: "등록", value: () => groupPatentCount() },
+  { label: "심사중", value: () => sumMetric("pending") },
+  { label: "직발서", value: () => sumMetric("disclosure") },
+  { label: "아이디어", value: () => sumMetric("idea") },
+];
 
 function renderStatusChart() {
-  const patents = STATE.data.patents;
-  const dist = [
-    { label: "등록", value: patents.filter(p => p.status === "registered").length, color: "--chart-1" },
-    { label: "심사중", value: sumMetric("pending"), color: "--chart-3" },
-    { label: "직발서", value: sumMetric("disclosure"), color: "--chart-5" },
-    { label: "아이디어", value: sumMetric("idea"), color: "--accent" },
-  ];
-  STATE.charts.status = new Chart(document.getElementById("statusChart"), {
+  const ctx = document.getElementById("statusChart");
+  if (!ctx) return;
+  if (STATE.charts.status) STATE.charts.status.destroy();
+
+  const dist = STATUS_CATS.map((c, i) => ({
+    label: c.label,
+    value: Math.max(0, Number(c.value()) || 0),
+    color: STATUS_CHART_COLORS[i] || STATUS_CHART_COLORS[0],
+  }));
+  const total = dist.reduce((s, d) => s + d.value, 0);
+  const subEl = document.getElementById("statusSub");
+  if (subEl) {
+    subEl.textContent = total
+      ? dist.map(d => `${d.label} ${d.value}`).join(" · ")
+      : "등록·심사중·직발서·아이디어";
+  }
+
+  const cardBg = cssVar("--card") || "#ffffff";
+  STATE.charts.status = new Chart(ctx, {
     type: "doughnut",
     data: {
       labels: dist.map(d => d.label),
       datasets: [{
         data: dist.map(d => d.value),
-        backgroundColor: dist.map(d => cssVar(d.color)),
-        borderColor: cssVar("--card"), borderWidth: 3, hoverOffset: 8,
+        backgroundColor: dist.map(d => d.color),
+        borderColor: cardBg,
+        borderWidth: 2,
+        hoverOffset: 6,
       }],
     },
-    plugins: [doughnutValueLabel],
     options: {
-      responsive: true, maintainAspectRatio: false, cutout: "62%",
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "58%",
       plugins: {
-        legend: { position: "bottom", labels: { padding: 14, usePointStyle: true, pointStyle: "circle" } },
-        tooltip: { callbacks: { label: (i) => ` ${i.label}: ${i.parsed}건` } },
+        legend: {
+          position: "bottom",
+          labels: {
+            padding: 14,
+            usePointStyle: true,
+            pointStyle: "circle",
+            generateLabels(chart) {
+              const ds = chart.data.datasets[0];
+              return chart.data.labels.map((label, i) => ({
+                text: `${label} ${ds.data[i]}건`,
+                fillStyle: ds.backgroundColor[i],
+                strokeStyle: ds.borderColor,
+                lineWidth: 0,
+                hidden: false,
+                index: i,
+              }));
+            },
+          },
+        },
+        tooltip: {
+          callbacks: {
+            label: (i) => {
+              const v = i.parsed || 0;
+              const sum = i.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = sum ? Math.round((v / sum) * 100) : 0;
+              return ` ${i.label}: ${v}건 (${pct}%)`;
+            },
+          },
+        },
       },
     },
   });
@@ -983,7 +1097,8 @@ function renderCompanyBars() {
   // 막대 길이를 절대 건수에 비례시키기 위한 최댓값 (파트 간 수량 비교 가능)
   const maxTotal = Math.max(1, ...rows.map(r => r.total));
 
-  const bars = rows.sort((a, b) => b.total - a.total).map(({ c, vals, total }) => {
+  // 파트별 진행 현황과 동일 — companies 배열 순서 유지
+  const bars = rows.map(({ c, vals, total }) => {
     // 각 구간 너비 = 건수 / 전체 최댓값 → 합계가 클수록 막대가 길어짐
     const segs = PORTFOLIO_CATS.map(cat => {
       const v = vals[cat.key];
@@ -1277,19 +1392,83 @@ function deletePatent(id) {
 }
 
 /* ---------- 파트별 지표 입력 (심사중/직발서/아이디어 + 분기 목표) ---------- */
+function patentsByCompany(companyId) {
+  return (STATE.data?.patents || []).filter(p => p.company === companyId);
+}
+
+function renderMetricPatentList(companyId) {
+  const list = patentsByCompany(companyId)
+    .sort((a, b) => String(b.filingDate || "").localeCompare(String(a.filingDate || "")));
+  const countEl = document.getElementById("metricPatentCount");
+  const ul = document.getElementById("metricPatentList");
+  if (countEl) {
+    countEl.textContent = list.length
+      ? `총 ${list.length}건 (A1 ${list.filter(p => p.grade === "A1").length} · A ${list.filter(p => p.grade === "A").length})`
+      : "등록된 출원이 없습니다.";
+  }
+  if (!ul) return;
+  if (!list.length) {
+    ul.innerHTML = '<li class="inventor-patent-empty">이 파트의 특허가 없습니다.</li>';
+    return;
+  }
+  const editable = canEdit();
+  ul.innerHTML = list.map(p => `
+    <li class="inventor-patent-item${editable ? " is-clickable" : ""}" data-id="${esc(p.id)}"${editable ? ' title="클릭하여 수정"' : ""}>
+      <div class="ip-title">${esc(p.title)}</div>
+      <div class="ip-meta">
+        <span>${esc(p.id)}</span>
+        <span>등급 ${esc(p.grade || "—")}</span>
+        <span>${statusLabel(p.status)}</span>
+        <span>출원 ${fmtDate(p.filingDate)}</span>
+      </div>
+    </li>`).join("");
+  if (editable) {
+    ul.querySelectorAll(".inventor-patent-item.is-clickable").forEach(li => {
+      li.addEventListener("click", () => {
+        const p = STATE.data.patents.find(x => x.id === li.dataset.id);
+        if (p) {
+          closeMetricModal();
+          openModal(p);
+        }
+      });
+    });
+  }
+}
+
+function fillMetricA1Summary(companyId) {
+  const el = document.getElementById("metricA1Summary");
+  if (!el) return;
+  const { done, annual, pct } = partA1Progress(companyId);
+  const year = STATE.data?.goals?.year || "";
+  el.innerHTML = `
+    <span>${year ? year + "년 " : ""}A1 달성 <strong>${done}</strong>건</span>
+    <span>A1 목표 <strong>${annual || "—"}</strong>건</span>
+    <span>달성률 <strong>${pct != null ? pct + "%" : "—"}</strong></span>`;
+}
+
 function openMetricModal(companyId) {
-  if (!canEdit()) return;
+  if (!STATE.accessRole) return;
   const m = partMetric(companyId);
   const form = document.getElementById("metricForm");
+  const ro = !canEditPart();
   document.getElementById("metricPartName").textContent = companyName(companyId);
   form.companyId.value = companyId;
   form.pending.value = m.pending || 0;
   form.disclosure.value = m.disclosure || 0;
   form.idea.value = m.idea || 0;
+  form.a1t1.value = (m.a1Target || [])[0] || 0;
+  form.a1t2.value = (m.a1Target || [])[1] || 0;
+  form.a1t3.value = (m.a1Target || [])[2] || 0;
+  form.a1t4.value = (m.a1Target || [])[3] || 0;
   form.t1.value = m.target[0] || 0;
   form.t2.value = m.target[1] || 0;
   form.t3.value = m.target[2] || 0;
   form.t4.value = m.target[3] || 0;
+  form.querySelectorAll("input[type=number]").forEach(inp => { inp.disabled = ro; });
+  const submitBtn = document.getElementById("metricSubmit");
+  if (submitBtn) submitBtn.hidden = ro;
+  fillMetricA1Summary(companyId);
+  renderMetricPatentList(companyId);
   document.getElementById("metricModal").hidden = false;
 }
 function closeMetricModal() { document.getElementById("metricModal").hidden = true; }
@@ -1487,6 +1666,7 @@ function bindMetricEvents() {
       pending: num(f.pending.value),
       disclosure: num(f.disclosure.value),
       idea: num(f.idea.value),
+      a1Target: [num(f.a1t1.value), num(f.a1t2.value), num(f.a1t3.value), num(f.a1t4.value)],
       target: [num(f.t1.value), num(f.t2.value), num(f.t3.value), num(f.t4.value)],
     };
     commitChange();
@@ -1537,12 +1717,16 @@ function debounce(fn, ms) {
 let appStarted = false;
 
 function applyAccessUI() {
-  const edit = canEdit();
-  document.body.classList.toggle("readonly-mode", !edit);
+  const role = STATE.accessRole;
+  const edit = role === "edit";
+  const part = role === "part";
+  document.body.classList.toggle("readonly-mode", role === "view");
+  document.body.classList.toggle("part-edit-mode", part);
   const badge = document.getElementById("accessBadge");
   if (badge) {
-    badge.textContent = edit ? "편집 권한" : "보기 전용";
-    badge.className = "access-badge " + (edit ? "edit" : "view");
+    const labels = { edit: "편집 권한", part: "파트 편집", view: "보기 전용" };
+    badge.textContent = labels[role] || "보기 전용";
+    badge.className = "access-badge " + (role || "view");
     badge.hidden = false;
   }
   const addBtn = document.getElementById("addBtn");
@@ -1593,6 +1777,9 @@ function setupLock() {
     } else if (pw === ACCESS_VIEW) {
       err.hidden = true;
       unlockApp("view");
+    } else if (pw === ACCESS_PART) {
+      err.hidden = true;
+      unlockApp("part");
     } else {
       err.hidden = false;
       input.value = "";

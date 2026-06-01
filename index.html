@@ -100,7 +100,7 @@
 
           <div class="card">
             <div class="card-head">
-              <div><h3>그룹 2026 상태별 분포</h3><span class="sub">등록·심사중·직발서·아이디어</span></div>
+              <div><h3>그룹 2026 상태별 분포</h3><span class="sub" id="statusSub">등록·심사중·직발서·아이디어</span></div>
             </div>
             <div class="card-body">
               <div class="chart-wrap"><canvas id="statusChart"></canvas></div>
@@ -275,13 +275,14 @@
 
   <!-- 파트 지표 입력 모달 -->
   <div class="modal-overlay" id="metricModal" hidden>
-    <div class="modal" style="max-width:420px">
+    <div class="modal metric-modal" style="max-width:520px">
       <div class="modal-head">
-        <h3><span id="metricPartName">파트</span> 지표 입력</h3>
+        <h3><span id="metricPartName">파트</span> 지표 · 출원 목록</h3>
         <button class="btn icon" id="metricClose" title="닫기">✕</button>
       </div>
       <form id="metricForm" class="modal-body">
         <input type="hidden" name="companyId" />
+        <div id="metricA1Summary" class="metric-a1-summary" aria-live="polite"></div>
         <div class="form-grid">
           <div class="field span2">
             <label>⏳ 심사중</label>
@@ -296,7 +297,26 @@
             <input class="input" type="number" min="0" name="idea" value="0" />
           </div>
         </div>
-        <div class="metric-section-title">🎯 분기별 목표 (누적)</div>
+        <div class="metric-section-title">🏅 A1 분기별 목표 (누적)</div>
+        <div class="form-grid form-grid-4">
+          <div class="field">
+            <label>1분기</label>
+            <input class="input" type="number" min="0" name="a1t1" value="0" />
+          </div>
+          <div class="field">
+            <label>2분기</label>
+            <input class="input" type="number" min="0" name="a1t2" value="0" />
+          </div>
+          <div class="field">
+            <label>3분기</label>
+            <input class="input" type="number" min="0" name="a1t3" value="0" />
+          </div>
+          <div class="field">
+            <label>4분기</label>
+            <input class="input" type="number" min="0" name="a1t4" value="0" />
+          </div>
+        </div>
+        <div class="metric-section-title">🎯 전체 분기별 목표 (A1+A 누적)</div>
         <div class="form-grid form-grid-4">
           <div class="field">
             <label>1분기</label>
@@ -315,9 +335,12 @@
             <input class="input" type="number" min="0" name="t4" value="0" />
           </div>
         </div>
+        <div class="metric-section-title">📋 파트 출원 목록</div>
+        <p class="metric-patent-count" id="metricPatentCount"></p>
+        <ul class="inventor-patent-list metric-patent-list" id="metricPatentList"></ul>
         <div class="modal-foot">
           <button type="button" class="btn" id="metricCancel">취소</button>
-          <button type="submit" class="btn primary">저장</button>
+          <button type="submit" class="btn primary" id="metricSubmit">저장</button>
         </div>
       </form>
     </div>
