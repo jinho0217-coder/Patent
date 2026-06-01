@@ -1611,12 +1611,22 @@ function renderMetricPatentList(companyId) {
 function fillMetricA1Summary(companyId) {
   const el = document.getElementById("metricA1Summary");
   if (!el) return;
-  const { done, annual, pct } = partA1Progress(companyId);
+  const a1 = partA1Progress(companyId);
+  const a = partAProgress(companyId);
   const year = STATE.data?.goals?.year || "";
   el.innerHTML = `
-    <span>${year ? year + "년 " : ""}A1 달성 <strong>${done}</strong>건</span>
-    <span>A1 목표 <strong>${annual || "—"}</strong>건</span>
-    <span>달성률 <strong>${pct != null ? pct + "%" : "—"}</strong></span>`;
+    <div class="metric-a1-row">
+      <span class="metric-a1-tag">${year ? year + "년 " : ""}A1</span>
+      <span>달성 <strong>${a1.done}</strong></span>
+      <span>목표 <strong>${a1.annual || "—"}</strong></span>
+      <span>달성률 <strong>${a1.pct != null ? a1.pct + "%" : "—"}</strong></span>
+    </div>
+    <div class="metric-a1-row">
+      <span class="metric-a1-tag">전체(A)</span>
+      <span>달성 <strong>${a.done}</strong></span>
+      <span>목표 <strong>${a.annual || "—"}</strong></span>
+      <span>달성률 <strong>${a.pct != null ? a.pct + "%" : "—"}</strong></span>
+    </div>`;
 }
 
 function openMetricModal(companyId) {
