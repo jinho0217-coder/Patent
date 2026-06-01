@@ -1065,22 +1065,22 @@ function renderProgressChart() {
       const allTxt = annual ? `전체 ${done}/${annual}` : `전체 ${done}`;
       meta.textContent = `${a1Txt} · ${allTxt}`;
     }
-    // 현재 분기 누적 기준 목표 미달이면 그래프 외곽에 빨간 테두리
-    const qi = Math.max(0, maxQ - 1);
-    const doneCurQ = g.a1[qi] + g.a[qi];
-    const below = hasTarget && (doneCurQ < (target[qi] || 0));
-    const card = document.getElementById("prog_" + c.id)?.closest(".mini-card");
-    if (card) card.classList.toggle("below-target", below);
+    // 분기별 목표 미달 여부 (현재 분기까지, 누적 실적 < 누적 목표)
+    const RED = chartColor("--destructive") || "oklch(0.5386 0.1937 26.7249)";
+    const belowAt = (i) => i < maxQ && hasTarget && ((g.a1[i] + g.a[i]) < (target[i] || 0));
+    const a1Border = labels.map((_, i) => belowAt(i) ? RED : a1Color);
+    const aBorder = labels.map((_, i) => belowAt(i) ? RED : aColor);
+    const borderW = labels.map((_, i) => belowAt(i) ? 2 : 1);
 
     const datasets = [
       {
         type: "bar", label: "A1", data: cap(g.a1),
-        backgroundColor: a1Color, borderColor: a1Color, borderWidth: 1,
+        backgroundColor: a1Color, borderColor: a1Border, borderWidth: borderW,
         stack: "ach", borderRadius: 2, borderSkipped: false,
       },
       {
         type: "bar", label: "A", data: cap(g.a),
-        backgroundColor: withAlpha(aColor, 0.55), borderColor: aColor, borderWidth: 1,
+        backgroundColor: withAlpha(aColor, 0.55), borderColor: aBorder, borderWidth: borderW,
         stack: "ach", borderRadius: 2, borderSkipped: false,
       },
     ];
