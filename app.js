@@ -611,24 +611,24 @@ function renderKPIs() {
       const tone = pct >= 100 ? "up" : "";
       const extra = `<div class="kpi-delta ${tone}">목표 ${target} · 달성률 ${pct}%</div>
         <div class="kpi-progress"><span style="width:${Math.min(pct, 100)}%"></span></div>`;
-      return kpiHTML(c.icon, c.label, `${done} <span class="kpi-unit">/ ${target}</span>`, extra, canEdit());
+      return kpiHTML(c.icon, c.label, `${done} <span class="kpi-unit">/ ${target}</span>`, extra, canEdit(), "kpi-major");
     }
     if (c.type === "metric") {
       const n = sumMetric(c.metric);
-      return kpiHTML(c.icon, c.label, n, c.sub ? `<div class="kpi-delta up">${c.sub}</div>` : "");
+      return kpiHTML(c.icon, c.label, n, c.sub ? `<div class="kpi-delta up">${c.sub}</div>` : "", false, "kpi-minor");
     }
     if (c.type === "status") {
       const n = STATE.data.patents.filter(p => p.status === c.status).length;
-      return kpiHTML(c.icon, c.label, n, c.sub ? `<div class="kpi-delta up">${c.sub}</div>` : "");
+      return kpiHTML(c.icon, c.label, n, c.sub ? `<div class="kpi-delta up">${c.sub}</div>` : "", false, "kpi-minor");
     }
     // manual
     const extra = c.sub ? `<div class="kpi-delta up">${c.sub}</div>` : "";
-    return kpiHTML(c.icon, c.label, c.value ?? 0, extra);
+    return kpiHTML(c.icon, c.label, c.value ?? 0, extra, false, "kpi-minor");
   }).join("");
 }
 
-function kpiHTML(icon, label, value, extra, editable) {
-  const cls = editable ? "kpi kpi-editable" : "kpi";
+function kpiHTML(icon, label, value, extra, editable, variant) {
+  const cls = ["kpi", variant || "", editable ? "kpi-editable" : ""].filter(Boolean).join(" ");
   const attrs = editable ? ' role="button" tabindex="0" data-goal-edit title="클릭하여 그룹 목표 수정"' : "";
   return `
     <div class="${cls}"${attrs}>
@@ -700,7 +700,9 @@ const currentQuarterLabel = {
       const pct = t ? Math.round((val / t) * 100) : 0;
       ctx.save();
       ctx.font = `bold 12px ${cssVar("--font-sans") || "sans-serif"}`;
-      ctx.fillStyle = ds.borderColor;
+      ctx.fillStyle = Array.isArray(ds.borderColor)
+        ? (ds.borderColor[qIdx] || ds._baseColor || "#333")
+        : ds.borderColor;
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
       ctx.fillText(`${val} (${pct}%)`, el.x, el.y - 5);
@@ -733,16 +735,22 @@ function renderTrendChart() {
   });
 
   // 분기별 누적 달성 (막대) — 현재 분기까지만 표시, 리스트 데이터와 자동 연동
+  // 목표 달성 시 파트색 유지, 미달 시 빨간색
+  const RED = chartColor("--destructive") || "oklch(0.58 0.22 27)";
   goals.grades.forEach(g => {
     const ach = gradeAchievement(g.id);
+    const base = cssVar("--" + g.color);
+    const data = ach.cum.map((v, i) => (i < maxQ ? v : null));
+    const reached = (i) => ach.cum[i] >= (g.quarterlyTarget[i] || 0);
     datasets.push({
       type: "bar",
       label: g.id + " 달성",
-      data: ach.cum.map((v, i) => (i < maxQ ? v : null)),
-      backgroundColor: withAlpha(cssVar("--" + g.color), 0.55),
-      borderColor: cssVar("--" + g.color), borderWidth: 1.5,
-      borderRadius: 4, borderSkipped: false, order: 1,
+      data,
+      backgroundColor: data.map((v, i) => v == null ? "transparent" : withAlpha(reached(i) ? base : RED, 0.55)),
+      borderColor: data.map((v, i) => v == null ? "transparent" : (reached(i) ? base : RED)),
+      borderWidth: 1.5, borderRadius: 4, borderSkipped: false, order: 1,
       _target: g.quarterlyTarget,
+      _baseColor: base,
     });
   });
 
@@ -822,20 +830,20 @@ const doughnutValueLabel = {
 };
 if (typeof Chart !== "undefined") Chart.register(doughnutValueLabel);
 
-// 그룹 상태별 분포 — 포트폴리오 「특허」 건수 = 등록(출원) 조각
+// 그룹 상태별 분포 — 등록을 A1/A 등급으로 분리 + 심사중·직발서·아이디어
 const STATUS_CHART_COLORS = [
-  "oklch(0.6731 0.1624 144.2083)",
-  "oklch(0.5234 0.1347 144.1672)",
-  "oklch(0.2157 0.0453 145.7256)",
-  "oklch(0.8952 0.0504 146.0366)",
+  "oklch(0.2157 0.0453 145.7256)", // A1 등록 (진한 초록)
+  "oklch(0.6731 0.1624 144.2083)", // A 등록 (초록)
+  "oklch(0.5234 0.1347 144.1672)", // 심사중
+  "oklch(0.4254 0.1159 144.3078)", // 직발서
+  "oklch(0.8952 0.0504 146.0366)", // 아이디어
 ];
-function groupPatentCount() {
-  if (!STATE.data?.companies) return (STATE.data?.patents || []).length;
-  return STATE.data.companies.reduce(
-    (s, c) => s + STATE.data.patents.filter(p => p.company === c.id).length, 0);
+function gradePatentCount(gradeId) {
+  return (STATE.data?.patents || []).filter(p => p.grade === gradeId).length;
 }
 const STATUS_CATS = [
-  { label: "등록", value: () => groupPatentCount() },
+  { label: "A1 등록", value: () => gradePatentCount("A1") },
+  { label: "A 등록", value: () => gradePatentCount("A") },
   { label: "심사중", value: () => sumMetric("pending") },
   { label: "직발서", value: () => sumMetric("disclosure") },
   { label: "아이디어", value: () => sumMetric("idea") },
@@ -856,7 +864,7 @@ function renderStatusChart() {
   if (subEl) {
     subEl.textContent = total
       ? dist.map(d => `${d.label} ${d.value}`).join(" · ")
-      : "등록·심사중·직발서·아이디어";
+      : "A1·A 등록·심사중·직발서·아이디어";
   }
 
   const cardBg = cssVar("--card") || "#ffffff";
@@ -1001,6 +1009,13 @@ function renderProgressChart() {
     const done = g.a1[3] + g.a[3];
     const meta = document.getElementById("meta_" + c.id);
     if (meta) meta.textContent = annual ? `${done}/${annual} · ${Math.round((done / annual) * 100)}%` : `${done}건`;
+    // 현재 분기 기준 목표 미달이면 카드에 빨간 테두리
+    const card = document.getElementById("prog_" + c.id)?.closest(".mini-card");
+    if (card) {
+      const qi = Math.max(0, maxQ - 1);
+      const below = hasTarget && (done < (target[qi] || 0));
+      card.classList.toggle("below-target", below);
+    }
 
     const datasets = [
       {
