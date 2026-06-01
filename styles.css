@@ -560,6 +560,42 @@ tbody tr:last-child td { border-bottom: none; }
 .metric-patent-count { font-size: 0.82rem; color: var(--muted-foreground); margin: 0 0 0.5rem; }
 .metric-patent-list { max-height: 220px; margin-bottom: 0.5rem; }
 .metric-modal .modal-body { max-height: min(85vh, 720px); overflow-y: auto; }
+
+/* 포트폴리오 막대 담당자 편집 가능한 구간 */
+#companyBars .seg-editable { cursor: pointer; }
+#companyBars .seg-editable:hover { filter: brightness(1.08) saturate(1.1); outline: 2px solid var(--ring, var(--primary)); outline-offset: -2px; }
+#companyBars .seg-people { cursor: default; }
+
+/* 담당자 호버 팝오버 */
+.bar-people-popover {
+  position: fixed; z-index: 1000; min-width: 150px; max-width: 240px;
+  background: var(--popover); color: var(--popover-foreground);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-md, 0 8px 24px -8px rgba(0,0,0,0.3));
+  padding: 0.55rem 0.7rem; font-size: 0.82rem; pointer-events: none;
+}
+.bar-people-popover[hidden] { display: none; }
+.bar-people-popover .bpp-title {
+  font-weight: 700; margin-bottom: 0.35rem; display: flex; justify-content: space-between; gap: 0.5rem;
+}
+.bar-people-popover .bpp-title span { color: var(--muted-foreground); font-weight: 600; }
+.bar-people-popover ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.bar-people-popover li {
+  background: var(--secondary); color: var(--secondary-foreground);
+  border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.76rem;
+}
+.bar-people-popover .bpp-empty { color: var(--muted-foreground); font-style: italic; }
+.bar-people-popover .bpp-hint { margin-top: 0.4rem; font-size: 0.72rem; color: var(--primary); }
+
+/* 담당자 편집 모달 */
+.people-add { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+.people-add .input { flex: 1; }
+.people-name-list { max-height: 260px; }
+.people-name-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.4rem 0.2rem 0.4rem 0.5rem; border-bottom: 1px solid var(--border);
+}
+.people-name-item .btn.icon { padding: 0.1rem 0.4rem; }
 .form-hint { font-size: 0.75rem; color: var(--muted-foreground); margin: 0.75rem 0 0; line-height: 1.4; }
 .access-badge {
   display: inline-block;
