@@ -1226,6 +1226,14 @@ function getBarPeoplePopover() {
     el.id = "barPeoplePopover";
     el.className = "bar-people-popover";
     el.hidden = true;
+    // 핵심 스타일은 인라인으로도 지정 (styles.css 캐시 대비)
+    el.style.cssText = [
+      "position:fixed", "z-index:2000", "min-width:150px", "max-width:240px",
+      "padding:0.55rem 0.7rem", "font-size:0.82rem", "pointer-events:none",
+      "border-radius:10px", "border:1px solid var(--border,#ddd)",
+      "background:var(--popover,#fff)", "color:var(--popover-foreground,#111)",
+      "box-shadow:0 8px 24px -8px rgba(0,0,0,0.35)",
+    ].join(";");
     document.body.appendChild(el);
   }
   return el;
