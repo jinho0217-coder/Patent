@@ -537,22 +537,37 @@ function partA1Progress(companyId) {
   const pct = annual ? Math.round((done / annual) * 100) : null;
   return { done, annual, pct };
 }
+// A 등급(전체 = A1+A) 진행 — 그룹 KPI와 동일한 집계 규칙
+function partAProgress(companyId) {
+  const g = partQuarterlyCumByGrade(companyId);
+  const m = partMetric(companyId);
+  const target = m.target || [0, 0, 0, 0];
+  const done = g.a1[3] + g.a[3];
+  const annual = target[target.length - 1] || 0;
+  const pct = annual ? Math.round((done / annual) * 100) : null;
+  return { done, annual, pct };
+}
+function progressLabel(prefix, p) {
+  if (p.annual) return `${prefix} ${p.done}/${p.annual} (${p.pct}%)`;
+  return `${prefix} ${p.done}`;
+}
 
 function buildCompanyNav() {
   const wrap = document.getElementById("companyNav");
   const editable = canEditPart();
   wrap.innerHTML = STATE.data.companies.map(c => {
     const a1 = partA1Progress(c.id);
-    const badge = a1.annual
-      ? `A1 ${a1.done}/${a1.annual} (${a1.pct}%)`
-      : `A1 ${a1.done}`;
+    const a = partAProgress(c.id);
     const icoColor = chartColor(`--${c.color}`);
     return `
     <a href="#" data-company="${c.id}" title="${STATE.accessRole ? "클릭하여 파트 상세 보기" : "로그인 필요"}">
       <span class="ico" style="color:${icoColor}">●</span>
       ${c.name}
       ${editable ? '<span class="part-edit">✎</span>' : ""}
-      <span style="margin-left:auto;color:var(--muted-foreground);font-size:.78rem" title="A1 달성/목표">${badge}</span>
+      <span class="nav-badge" title="A1·A 달성/목표">
+        <span>${progressLabel("A1", a1)}</span>
+        <span>${progressLabel("A", a)}</span>
+      </span>
     </a>`;
   }).join("");
   if (!STATE.accessRole) return;
@@ -982,16 +997,17 @@ function renderProgressChart() {
 
   const labels = ["1Q", "2Q", "3Q", "4Q"];
   const maxQ = currentQuarterForYear(goals.year);
-  const a1Color = cssVar("--chart-5"); // 진한 초록 = A1
+  const a1Color = cssVar("--chart-5"); // 진한 초록 = A1 (모든 파트 공통)
+  const aColor = chartColor("--chart-1"); // 초록 = A (모든 파트 공통, NE 색상)
 
   const subEl = document.getElementById("progressSub");
-  if (subEl) subEl.textContent = `${goals.year}년 · 파트별 분기 누적 (■ A1 진한초록 / ■ A 파트색 / ┄ 목표)`;
+  if (subEl) subEl.textContent = `${goals.year}년 · 파트별 분기 누적 (■ A1 진한초록 / ■ A 초록 / ┄ 목표)`;
 
   // 각 파트 카드 DOM 생성
   grid.innerHTML = STATE.data.companies.map(c => `
     <div class="mini-card">
       <div class="mini-title">
-        <span class="swatch" style="background:${cssVar("--" + c.color)}"></span>${c.name}
+        <span class="swatch" style="background:${chartColor("--" + c.color)}"></span>${c.name}
         <span class="mini-meta" id="meta_${c.id}"></span>
       </div>
       <div class="mini-chart"><canvas id="prog_${c.id}"></canvas></div>
@@ -1001,7 +1017,6 @@ function renderProgressChart() {
     const g = partQuarterlyCumByGrade(c.id);
     const target = partMetric(c.id).target;
     const hasTarget = target.some(v => v > 0);
-    const color = cssVar("--" + c.color);
     const cap = (arr) => arr.map((v, i) => (i < maxQ ? v : null));
 
     // 메타: 연간 실적/목표 (달성률)
@@ -1009,13 +1024,12 @@ function renderProgressChart() {
     const done = g.a1[3] + g.a[3];
     const meta = document.getElementById("meta_" + c.id);
     if (meta) meta.textContent = annual ? `${done}/${annual} · ${Math.round((done / annual) * 100)}%` : `${done}건`;
-    // 현재 분기 기준 목표 미달이면 카드에 빨간 테두리
+    // 현재 분기 누적 기준 목표 미달이면 그래프 외곽에 빨간 테두리
+    const qi = Math.max(0, maxQ - 1);
+    const doneCurQ = g.a1[qi] + g.a[qi];
+    const below = hasTarget && (doneCurQ < (target[qi] || 0));
     const card = document.getElementById("prog_" + c.id)?.closest(".mini-card");
-    if (card) {
-      const qi = Math.max(0, maxQ - 1);
-      const below = hasTarget && (done < (target[qi] || 0));
-      card.classList.toggle("below-target", below);
-    }
+    if (card) card.classList.toggle("below-target", below);
 
     const datasets = [
       {
@@ -1025,7 +1039,7 @@ function renderProgressChart() {
       },
       {
         type: "bar", label: "A", data: cap(g.a),
-        backgroundColor: withAlpha(color, 0.55), borderColor: color, borderWidth: 1,
+        backgroundColor: withAlpha(aColor, 0.55), borderColor: aColor, borderWidth: 1,
         stack: "ach", borderRadius: 2, borderSkipped: false,
       },
     ];
