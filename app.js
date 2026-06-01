@@ -1084,9 +1084,10 @@ function renderProgressChart() {
         stack: "ach", borderRadius: 2, borderSkipped: false,
       },
     ];
+    // 목표선은 각각 독립 stack 으로 두어 막대 누적값에 합산되지 않도록 한다
     if (hasA1Target) {
       datasets.push({
-        type: "line", label: "A1 목표", data: a1Target,
+        type: "line", label: "A1 목표", data: a1Target, stack: "t_a1",
         borderColor: a1Color, backgroundColor: "transparent",
         borderWidth: 1.5, borderDash: [3, 3], tension: 0,
         pointStyle: "triangle", pointRadius: 3, fill: false,
@@ -1094,7 +1095,7 @@ function renderProgressChart() {
     }
     if (hasTarget) {
       datasets.push({
-        type: "line", label: "전체 목표", data: target,
+        type: "line", label: "전체 목표", data: target, stack: "t_all",
         borderColor: cssVar("--muted-foreground"), backgroundColor: "transparent",
         borderWidth: 1.5, borderDash: [4, 3], tension: 0,
         pointStyle: "rectRot", pointRadius: 2.5, fill: false,
