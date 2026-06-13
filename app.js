@@ -131,11 +131,39 @@ function emptyNames() { return { pending: [], disclosure: [], idea: [] }; }
 function emptyMetric() {
   return { pending: 0, disclosure: 0, idea: 0, target: [0, 0, 0, 0], a1Target: [0, 0, 0, 0], names: emptyNames() };
 }
+function normalizePerson(item) {
+  if (typeof item === "string") {
+    const name = item.trim();
+    return name ? { name, title: "" } : null;
+  }
+  if (item && typeof item === "object") {
+    const name = String(item.name || "").trim();
+    if (!name) return null;
+    return { name, title: String(item.title || "").trim() };
+  }
+  return null;
+}
+function personDisplay(p) {
+  const name = typeof p === "string" ? p.trim() : (p?.name || "").trim();
+  const title = typeof p === "string" ? "" : (p?.title || "").trim();
+  if (!name) return "—";
+  return title ? `${name} · ${title}` : name;
+}
+function personPopoverHtml(p) {
+  const norm = normalizePerson(p);
+  if (!norm) return "";
+  if (norm.title) {
+    return `<li class="bpp-person"><span class="bpp-name">${esc(norm.name)}</span><span class="bpp-title-text">${esc(norm.title)}</span></li>`;
+  }
+  return `<li class="bpp-person"><span class="bpp-name">${esc(norm.name)}</span></li>`;
+}
 function normalizeNames(n) {
   const base = emptyNames();
   if (n && typeof n === "object") {
     ["pending", "disclosure", "idea"].forEach(k => {
-      if (Array.isArray(n[k])) base[k] = n[k].map(s => String(s).trim()).filter(Boolean);
+      if (Array.isArray(n[k])) {
+        base[k] = n[k].map(normalizePerson).filter(Boolean);
+      }
     });
   }
   return base;
@@ -524,6 +552,7 @@ async function init() {
   bindPeopleEvents();
   bindGoalsEvents();
   bindInventorEvents();
+  bindKpiPeopleEvents();
   refreshAll();
   updateDataMeta();
   updateHistButtons();
@@ -640,7 +669,7 @@ function renderKPIs() {
       const tone = pct >= 100 ? "up" : "";
       const extra = `<div class="kpi-delta ${tone}">목표 ${target} · 달성률 ${pct}%</div>
         <div class="kpi-progress"><span style="width:${Math.min(pct, 100)}%"></span></div>`;
-      return kpiHTML(c.icon, c.label, `${done} <span class="kpi-unit">/ ${target}</span>`, extra, canEdit(), "kpi-major");
+    return kpiHTML(c.icon, c.label, `${done} <span class="kpi-unit">/ ${target}</span>`, extra, canEdit(), "kpi-major", c.grade);
     }
     if (c.type === "metric") {
       const n = sumMetric(c.metric);
@@ -656,16 +685,103 @@ function renderKPIs() {
   }).join("");
 }
 
-function kpiHTML(icon, label, value, extra, editable, variant) {
+function kpiHTML(icon, label, value, extra, editable, variant, kpiKey) {
   const cls = ["kpi", variant || "", editable ? "kpi-editable" : ""].filter(Boolean).join(" ");
   const attrs = editable ? ' role="button" tabindex="0" data-goal-edit title="클릭하여 그룹 목표 수정"' : "";
+  const hoverAttr = kpiKey ? ` data-kpi="${kpiKey}"` : "";
   return `
-    <div class="${cls}"${attrs}>
+    <div class="${cls}"${attrs}${hoverAttr}>
       <div class="kpi-icon">${icon || "📌"}</div>
       <div class="kpi-label">${label}</div>
       <div class="kpi-value">${value}</div>
       ${extra || ""}
     </div>`;
+}
+
+/* KPI 호버 — A1/A 등급 발명자 (동명이면 N건) */
+function collectKpiPeopleRaw(kpiKey) {
+  if (kpiKey !== "A1" && kpiKey !== "A") return [];
+  const year = STATE.data.goals?.year;
+  const items = [];
+  STATE.data.patents.forEach(p => {
+    if (!matchGrade(p, kpiKey)) return;
+    if (p.filingDate && year && fiscalYearOf(p.filingDate) !== year) return;
+    inventorsOf(p).forEach(name => items.push({ name }));
+  });
+  return items;
+}
+function formatKpiPeopleLabels(items) {
+  const counts = new Map();
+  items.forEach(item => {
+    const n = normalizePerson(item);
+    if (!n?.name) return;
+    counts.set(n.name, (counts.get(n.name) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], "ko"))
+    .map(([name, count]) => count > 1 ? `${name} (${count}건)` : name);
+}
+function kpiPeopleList(kpiKey) {
+  return formatKpiPeopleLabels(collectKpiPeopleRaw(kpiKey));
+}
+function getKpiPeoplePopover() {
+  let el = document.getElementById("kpiPeoplePopover");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "kpiPeoplePopover";
+    el.className = "bar-people-popover kpi-people-popover";
+    el.hidden = true;
+    el.style.cssText = [
+      "position:fixed", "z-index:2000", "min-width:260px", "max-width:420px",
+      "padding:0.55rem 0.7rem", "font-size:0.82rem", "pointer-events:none",
+      "border-radius:10px", "border:1px solid var(--border,#ddd)",
+      "background:var(--popover,#fff)", "color:var(--popover-foreground,#111)",
+      "box-shadow:0 8px 24px -8px rgba(0,0,0,0.35)",
+    ].join(";");
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function showKpiPeoplePopover(card) {
+  const key = card.dataset.kpi;
+  if (!key) return;
+  const names = kpiPeopleList(key);
+  const label = card.querySelector(".kpi-label")?.textContent || key;
+  const pop = getKpiPeoplePopover();
+  const listHtml = names.length
+    ? `<ul class="bpp-list bpp-list-cols3">${names.map(n => `<li class="bpp-person"><span class="bpp-name">${esc(n)}</span></li>`).join("")}</ul>`
+    : `<div class="bpp-empty">등록된 발명자 없음</div>`;
+  pop.innerHTML = `
+    <div class="bpp-head">${esc(label)} <span>${names.length}명</span></div>
+    ${listHtml}`;
+  pop.hidden = false;
+  const r = card.getBoundingClientRect();
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let left = r.left + r.width / 2 - pw / 2;
+  left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
+  let top = r.bottom + 8;
+  if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;
+  if (top < 8) top = Math.max(8, window.innerHeight - ph - 8);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+function hideKpiPeoplePopover() {
+  const el = document.getElementById("kpiPeoplePopover");
+  if (el) el.hidden = true;
+}
+function bindKpiPeopleEvents() {
+  const grid = document.getElementById("overview");
+  if (!grid || grid.dataset.kpiPeopleBound) return;
+  grid.dataset.kpiPeopleBound = "1";
+  grid.addEventListener("mouseover", (e) => {
+    const card = e.target.closest('.kpi[data-kpi="A1"], .kpi[data-kpi="A"]');
+    if (card && grid.contains(card)) showKpiPeoplePopover(card);
+  });
+  grid.addEventListener("mouseout", (e) => {
+    const card = e.target.closest('.kpi[data-kpi="A1"], .kpi[data-kpi="A"]');
+    const to = e.relatedTarget;
+    if (card && (!to || !card.contains(to))) hideKpiPeoplePopover();
+  });
 }
 
 /* ---------- 목표 달성 계산 (리스트 데이터 기반, 자동 연동) ---------- */
@@ -886,12 +1002,26 @@ function gradePatentCount(gradeId) {
   return (STATE.data?.patents || []).filter(p => p.grade === gradeId).length;
 }
 const STATUS_CATS = [
-  { label: "A1 등록", value: () => gradePatentCount("A1") },
-  { label: "A 등록", value: () => gradePatentCount("A") },
-  { label: "심사중", value: () => sumMetric("pending") },
-  { label: "직발서", value: () => sumMetric("disclosure") },
-  { label: "아이디어", value: () => sumMetric("idea") },
+  { key: "a1", label: "A1 등록", value: () => gradePatentCount("A1") },
+  { key: "a", label: "A 등록", value: () => gradePatentCount("A") },
+  { key: "pending", label: "심사중", value: () => sumMetric("pending") },
+  { key: "disclosure", label: "직발서", value: () => sumMetric("disclosure") },
+  { key: "idea", label: "아이디어", value: () => sumMetric("idea") },
 ];
+
+function statusPartBreakdown(catKey) {
+  if (!STATE.data?.companies) return [];
+  return STATE.data.companies.map(c => {
+    let v = 0;
+    if (catKey === "a1") v = STATE.data.patents.filter(p => p.company === c.id && p.grade === "A1").length;
+    else if (catKey === "a") v = STATE.data.patents.filter(p => p.company === c.id && p.grade === "A").length;
+    else {
+      const m = partMetric(c.id);
+      v = m[catKey] || 0;
+    }
+    return { name: c.name, value: v };
+  }).filter(x => x.value > 0);
+}
 
 function renderStatusChart() {
   const ctx = document.getElementById("statusChart");
@@ -949,12 +1079,23 @@ function renderStatusChart() {
           },
         },
         tooltip: {
+          backgroundColor: cssVar("--popover"), titleColor: cssVar("--popover-foreground"),
+          bodyColor: cssVar("--popover-foreground"), borderColor: cssVar("--border"), borderWidth: 1,
+          padding: 12, cornerRadius: 8,
           callbacks: {
             label: (i) => {
               const v = i.parsed || 0;
               const sum = i.dataset.data.reduce((a, b) => a + b, 0);
               const pct = sum ? Math.round((v / sum) * 100) : 0;
               return ` ${i.label}: ${v}건 (${pct}%)`;
+            },
+            afterBody: (items) => {
+              if (!items.length) return [];
+              const cat = STATUS_CATS[items[0].dataIndex];
+              if (!cat) return [];
+              const parts = statusPartBreakdown(cat.key);
+              if (!parts.length) return ["", "  파트별: 없음"];
+              return ["", "  파트별", ...parts.map(p => `  ${p.name} ${p.value}건`)];
             },
           },
         },
@@ -1155,6 +1296,8 @@ const PORTFOLIO_CATS = [
   { key: "disclosure", label: "직발서", color: "--chart-5" },
   { key: "idea", label: "아이디어", color: "--accent" },
 ];
+// 이름·제목 수동 입력 가능 (특허 제외 — 출원 목록 연동)
+const METRIC_PEOPLE_KEYS = ["pending", "disclosure", "idea"];
 
 function partCatValues(companyId) {
   const m = partMetric(companyId);
@@ -1168,16 +1311,19 @@ function partCatValues(companyId) {
 
 function catLabel(key) { return (PORTFOLIO_CATS.find(c => c.key === key) || {}).label || key; }
 
-// 카테고리별 담당자 이름: 특허는 발명자 자동 집계, 나머지는 입력값
+// 카테고리별 담당자: 특허=출원목록 발명자·특허명(읽기전용), 나머지=수동 입력(이름·제목)
 function partCatNames(companyId, key) {
   if (key === "patent") {
     const out = [];
     STATE.data.patents.filter(p => p.company === companyId).forEach(p => {
-      inventorsOf(p).forEach(n => { if (!out.includes(n)) out.push(n); });
+      inventorsOf(p).forEach(name => {
+        out.push({ name, title: p.title || "" });
+      });
     });
     return out;
   }
-  return (partMetric(companyId).names?.[key] || []).slice();
+  if (!METRIC_PEOPLE_KEYS.includes(key)) return [];
+  return (partMetric(companyId).names?.[key] || []).map(normalizePerson).filter(Boolean);
 }
 
 function renderCompanyBars() {
@@ -1232,7 +1378,7 @@ function getBarPeoplePopover() {
     el.hidden = true;
     // 핵심 스타일은 인라인으로도 지정 (styles.css 캐시 대비)
     el.style.cssText = [
-      "position:fixed", "z-index:2000", "min-width:150px", "max-width:240px",
+      "position:fixed", "z-index:2000", "min-width:180px", "max-width:280px",
       "padding:0.55rem 0.7rem", "font-size:0.82rem", "pointer-events:none",
       "border-radius:10px", "border:1px solid var(--border,#ddd)",
       "background:var(--popover,#fff)", "color:var(--popover-foreground,#111)",
@@ -1248,14 +1394,12 @@ function showBarPeoplePopover(seg) {
   const key = seg.dataset.cat;
   const names = partCatNames(companyId, key);
   const pop = getBarPeoplePopover();
-  const editable = key !== "patent" && canEditPart();
   const listHtml = names.length
-    ? `<ul>${names.map(n => `<li>${esc(n)}</li>`).join("")}</ul>`
+    ? `<ul class="bpp-list">${names.map(p => personPopoverHtml(p)).join("")}</ul>`
     : `<div class="bpp-empty">담당자 미입력</div>`;
   pop.innerHTML = `
-    <div class="bpp-title">${companyName(companyId)} · ${catLabel(key)} <span>${names.length}명</span></div>
-    ${listHtml}
-    ${editable ? '<div class="bpp-hint">클릭하여 담당자 편집</div>' : ""}`;
+    <div class="bpp-head">${companyName(companyId)} · ${catLabel(key)} <span>${names.length}명</span></div>
+    ${listHtml}`;
   pop.hidden = false;
   const r = seg.getBoundingClientRect();
   const pw = pop.offsetWidth, ph = pop.offsetHeight;
@@ -1263,6 +1407,7 @@ function showBarPeoplePopover(seg) {
   left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
   let top = r.top - ph - 8;
   if (top < 8) top = r.bottom + 8;
+  if (top + ph > window.innerHeight - 8) top = Math.max(8, window.innerHeight - ph - 8);
   pop.style.left = `${left}px`;
   pop.style.top = `${top}px`;
 }
@@ -1661,9 +1806,34 @@ function openMetricModal(companyId) {
   if (submitBtn) submitBtn.hidden = ro;
   fillMetricA1Summary(companyId);
   renderMetricPatentList(companyId);
+  renderMetricPeopleSections(companyId);
   document.getElementById("metricModal").hidden = false;
 }
 function closeMetricModal() { document.getElementById("metricModal").hidden = true; }
+
+/* 파트 모달 — 심사중·직발서·아이디어 담당자(이름·제목) 미리보기 */
+function renderMetricPeopleSections(companyId) {
+  const wrap = document.getElementById("metricPeopleSections");
+  if (!wrap) return;
+  const editable = canEditPart();
+  wrap.innerHTML = METRIC_PEOPLE_KEYS.map(key => {
+    const people = partCatNames(companyId, key);
+    const preview = people.length
+      ? people.map(p => {
+          const n = normalizePerson(p);
+          return `<li><strong>${esc(n.name)}</strong>${n.title ? `<span class="mpp-title">${esc(n.title)}</span>` : ""}</li>`;
+        }).join("")
+      : `<li class="metric-people-empty">담당자 없음</li>`;
+    return `
+    <div class="metric-people-block">
+      <div class="metric-people-head">
+        <span>${catLabel(key)} <em class="metric-people-count">${people.length}명</em></span>
+        ${editable ? `<button type="button" class="btn sm metric-people-edit" data-cat="${key}">이름·제목 편집</button>` : ""}
+      </div>
+      <ul class="metric-people-preview">${preview}</ul>
+    </div>`;
+  }).join("");
+}
 
 /* ---------- 발명자별 출원 목록 ---------- */
 function openInventorModal(name) {
@@ -1849,6 +2019,12 @@ function bindMetricEvents() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !document.getElementById("metricModal").hidden) closeMetricModal();
   });
+  document.getElementById("metricForm")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".metric-people-edit");
+    if (!btn) return;
+    const companyId = document.getElementById("metricForm")?.companyId?.value;
+    if (companyId) openPeopleModal(companyId, btn.dataset.cat);
+  });
   document.getElementById("metricForm")?.addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
@@ -1879,15 +2055,17 @@ function bindMetricEvents() {
 function openPeopleModal(companyId, key) {
   if (key === "patent") return;        // 특허는 발명자 자동 집계 (편집 X)
   if (!canEditPart()) return;
-  const cur = (partMetric(companyId).names?.[key] || []).slice();
-  STATE.peopleEdit = { companyId, key, names: cur };
+  const cur = (partMetric(companyId).names?.[key] || []).map(normalizePerson).filter(Boolean);
+  STATE.peopleEdit = { companyId, key, names: cur, titleEditIndex: null };
   document.getElementById("peopleModalTitle").textContent =
     `${companyName(companyId)} · ${catLabel(key)} 담당자`;
-  const input = document.getElementById("peopleNameInput");
-  if (input) input.value = "";
+  const nameInput = document.getElementById("peopleNameInput");
+  const titleInput = document.getElementById("peopleTitleInput");
+  if (nameInput) nameInput.value = "";
+  if (titleInput) titleInput.value = "";
   renderPeopleList();
   showModal(document.getElementById("peopleModal"));
-  setTimeout(() => input?.focus(), 50);
+  setTimeout(() => nameInput?.focus(), 50);
 }
 function closePeopleModal() {
   hideModal(document.getElementById("peopleModal"));
@@ -1897,36 +2075,78 @@ function renderPeopleList() {
   const ul = document.getElementById("peopleNameList");
   if (!ul || !STATE.peopleEdit) return;
   const names = STATE.peopleEdit.names;
+  const editIdx = STATE.peopleEdit.titleEditIndex;
   ul.innerHTML = names.length
-    ? names.map((n, i) => `
-      <li class="people-name-item">
-        <span>${esc(n)}</span>
+    ? names.map((p, i) => {
+      if (editIdx === i) {
+        return `
+      <li class="people-name-item is-editing">
+        <div class="people-title-edit">
+          <strong>${esc(p.name)}</strong>
+          <input class="input people-title-edit-input" id="peopleTitleEdit_${i}" data-i="${i}" value="${esc(p.title)}" placeholder="제목 입력" />
+          <div class="people-title-edit-actions">
+            <button type="button" class="btn primary people-title-apply" data-i="${i}">적용</button>
+            <button type="button" class="btn people-title-cancel">취소</button>
+          </div>
+        </div>
         <button type="button" class="btn icon people-remove" data-i="${i}" title="삭제">✕</button>
-      </li>`).join("")
-    : '<li class="inventor-patent-empty">담당자가 없습니다. 이름을 추가하세요.</li>';
+      </li>`;
+      }
+      const hint = p.title ? "" : `<span class="people-item-hint">클릭하여 제목 추가</span>`;
+      return `
+      <li class="people-name-item${p.title ? "" : " is-title-missing"}">
+        <button type="button" class="people-item-text people-title-trigger" data-i="${i}" title="${p.title ? "클릭하여 제목 수정" : "클릭하여 제목 추가"}">
+          <strong>${esc(p.name)}</strong>${p.title ? `<span class="people-item-title">${esc(p.title)}</span>` : hint}
+        </button>
+        <button type="button" class="btn icon people-remove" data-i="${i}" title="삭제">✕</button>
+      </li>`;
+    }).join("")
+    : '<li class="inventor-patent-empty">담당자가 없습니다. 이름과 제목을 추가하세요.</li>';
+}
+function startTitleEdit(i) {
+  if (!STATE.peopleEdit || i < 0 || i >= STATE.peopleEdit.names.length) return;
+  STATE.peopleEdit.titleEditIndex = i;
+  renderPeopleList();
+  setTimeout(() => document.getElementById(`peopleTitleEdit_${i}`)?.focus(), 30);
+}
+function applyTitleEdit(i) {
+  if (!STATE.peopleEdit || i < 0 || i >= STATE.peopleEdit.names.length) return;
+  const inp = document.getElementById(`peopleTitleEdit_${i}`);
+  STATE.peopleEdit.names[i].title = (inp?.value || "").trim();
+  STATE.peopleEdit.titleEditIndex = null;
+  renderPeopleList();
+}
+function cancelTitleEdit() {
+  if (!STATE.peopleEdit) return;
+  STATE.peopleEdit.titleEditIndex = null;
+  renderPeopleList();
 }
 function addPeopleName() {
   if (!STATE.peopleEdit) return;
-  const input = document.getElementById("peopleNameInput");
-  const raw = (input?.value || "").trim();
+  const nameInput = document.getElementById("peopleNameInput");
+  const titleInput = document.getElementById("peopleTitleInput");
+  const raw = (nameInput?.value || "").trim();
   if (!raw) return;
-  // 쉼표 구분 다중 입력 지원
-  raw.split(/[,，、]/).map(s => s.trim()).filter(Boolean).forEach(n => {
-    if (!STATE.peopleEdit.names.includes(n)) STATE.peopleEdit.names.push(n);
+  const title = (titleInput?.value || "").trim();
+  raw.split(/[,，、]/).map(s => s.trim()).filter(Boolean).forEach(name => {
+    STATE.peopleEdit.names.push({ name, title });
   });
-  if (input) input.value = "";
+  if (nameInput) nameInput.value = "";
+  if (titleInput) titleInput.value = "";
   renderPeopleList();
-  input?.focus();
+  nameInput?.focus();
 }
 function savePeopleNames() {
   if (!STATE.peopleEdit) return;
   const { companyId, key, names } = STATE.peopleEdit;
   const m = partMetric(companyId);
   const next = normalizeNames(m.names);
-  next[key] = names.slice();
+  next[key] = names.map(normalizePerson).filter(Boolean);
   STATE.partMetrics[companyId] = Object.assign(emptyMetric(), m, { names: next });
   commitChange();
   closePeopleModal();
+  const metricModal = document.getElementById("metricModal");
+  if (metricModal && !metricModal.hidden) renderMetricPeopleSections(companyId);
 }
 function bindPeopleEvents() {
   document.getElementById("peopleClose")?.addEventListener("click", closePeopleModal);
@@ -1942,12 +2162,39 @@ function bindPeopleEvents() {
   document.getElementById("peopleNameInput")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); addPeopleName(); }
   });
+  document.getElementById("peopleTitleInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addPeopleName(); }
+  });
   document.getElementById("peopleSave")?.addEventListener("click", savePeopleNames);
   document.getElementById("peopleNameList")?.addEventListener("click", (e) => {
     const btn = e.target.closest(".people-remove");
-    if (!btn || !STATE.peopleEdit) return;
-    const i = parseInt(btn.dataset.i, 10);
-    if (i >= 0) { STATE.peopleEdit.names.splice(i, 1); renderPeopleList(); }
+    if (btn && STATE.peopleEdit) {
+      const i = parseInt(btn.dataset.i, 10);
+      if (i >= 0) {
+        if (STATE.peopleEdit.titleEditIndex === i) STATE.peopleEdit.titleEditIndex = null;
+        STATE.peopleEdit.names.splice(i, 1);
+        renderPeopleList();
+      }
+      return;
+    }
+    const trigger = e.target.closest(".people-title-trigger");
+    if (trigger && STATE.peopleEdit) {
+      startTitleEdit(parseInt(trigger.dataset.i, 10));
+      return;
+    }
+    const apply = e.target.closest(".people-title-apply");
+    if (apply && STATE.peopleEdit) {
+      applyTitleEdit(parseInt(apply.dataset.i, 10));
+      return;
+    }
+    if (e.target.closest(".people-title-cancel")) cancelTitleEdit();
+  });
+  document.getElementById("peopleNameList")?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const inp = e.target.closest(".people-title-edit-input");
+    if (!inp || !STATE.peopleEdit) return;
+    e.preventDefault();
+    applyTitleEdit(parseInt(inp.dataset.i, 10));
   });
 }
 
