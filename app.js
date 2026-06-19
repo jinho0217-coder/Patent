@@ -131,31 +131,55 @@ function emptyNames() { return { pending: [], disclosure: [], idea: [] }; }
 function emptyMetric() {
   return { pending: 0, disclosure: 0, idea: 0, target: [0, 0, 0, 0], a1Target: [0, 0, 0, 0], names: emptyNames() };
 }
+function normalizeStage(item) {
+  if (!item || typeof item !== "object") return null;
+  const text = String(item.text ?? item.stage ?? "").trim();
+  const date = String(item.date || "").trim();
+  if (!text && !date) return null;
+  return { text, date };
+}
+function normalizeStages(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.map(normalizeStage).filter(Boolean);
+}
 function normalizePerson(item) {
   if (typeof item === "string") {
     const name = item.trim();
-    return name ? { name, title: "" } : null;
+    return name ? { name, title: "", reviewDate: "", stages: [], completed: false } : null;
   }
   if (item && typeof item === "object") {
     const name = String(item.name || "").trim();
     if (!name) return null;
-    return { name, title: String(item.title || "").trim() };
+    return {
+      name,
+      title: String(item.title || "").trim(),
+      reviewDate: String(item.reviewDate || "").trim(),
+      stages: normalizeStages(item.stages),
+      completed: !!item.completed,
+      patent: !!(item._patent || item.patent),
+    };
   }
   return null;
 }
-function personDisplay(p) {
-  const name = typeof p === "string" ? p.trim() : (p?.name || "").trim();
-  const title = typeof p === "string" ? "" : (p?.title || "").trim();
-  if (!name) return "—";
-  return title ? `${name} · ${title}` : name;
+function formatReviewDateLabel(dateStr) {
+  const d = String(dateStr || "").trim();
+  return d || "미정";
 }
-function personPopoverHtml(p) {
+function personDisplay(p) {
+  const norm = normalizePerson(p);
+  if (!norm) return "—";
+  const parts = [norm.name];
+  if (norm.title) parts.push(norm.title);
+  parts.push(`작성완료 목표 ${formatReviewDateLabel(norm.reviewDate)}`);
+  return parts.join(" · ");
+}
+/* 포트폴리오 막대 호버 — 이름·제목만 */
+function personBarPopoverHtml(p) {
   const norm = normalizePerson(p);
   if (!norm) return "";
-  if (norm.title) {
-    return `<li class="bpp-person"><span class="bpp-name">${esc(norm.name)}</span><span class="bpp-title-text">${esc(norm.title)}</span></li>`;
-  }
-  return `<li class="bpp-person"><span class="bpp-name">${esc(norm.name)}</span></li>`;
+  let inner = `<span class="bpp-name">${esc(norm.name)}</span>`;
+  if (norm.title) inner += `<span class="bpp-title-text">${esc(norm.title)}</span>`;
+  return `<li class="bpp-person">${inner}</li>`;
 }
 function normalizeNames(n) {
   const base = emptyNames();
@@ -168,6 +192,30 @@ function normalizeNames(n) {
   }
   return base;
 }
+function metricCountsFromNames(names) {
+  const n = normalizeNames(names);
+  return {
+    pending: n.pending.length,
+    disclosure: n.disclosure.length,
+    idea: n.idea.length,
+  };
+}
+function metricPeopleCount(companyId, key) {
+  return metricCountsFromNames(partMetric(companyId).names)[key] || 0;
+}
+function applyMetricCountsFromNames(metric) {
+  const m = Object.assign(emptyMetric(), metric);
+  m.names = normalizeNames(m.names);
+  Object.assign(m, metricCountsFromNames(m.names));
+  return m;
+}
+function syncPartMetricCounts(companyId) {
+  STATE.partMetrics[companyId] = applyMetricCountsFromNames(partMetric(companyId));
+  return STATE.partMetrics[companyId];
+}
+function syncAllPartMetricCounts() {
+  (STATE.data?.companies || []).forEach(c => syncPartMetricCounts(c.id));
+}
 function loadPartMetrics() {
   let saved = {};
   try {
@@ -176,10 +224,9 @@ function loadPartMetrics() {
   } catch {}
   const out = {};
   STATE.data.companies.forEach(c => {
-    out[c.id] = Object.assign(emptyMetric(), saved[c.id] || {});
+    out[c.id] = applyMetricCountsFromNames(saved[c.id] || {});
     if (!Array.isArray(out[c.id].target)) out[c.id].target = [0, 0, 0, 0];
     if (!Array.isArray(out[c.id].a1Target)) out[c.id].a1Target = [0, 0, 0, 0];
-    out[c.id].names = normalizeNames(out[c.id].names);
   });
   return out;
 }
@@ -218,7 +265,7 @@ function saveGroupGoals() {
   try { localStorage.setItem(STORAGE_KEY_GOALS, JSON.stringify(snap)); } catch {}
 }
 function sumMetric(key) {
-  return STATE.data.companies.reduce((s, c) => s + (partMetric(c.id)[key] || 0), 0);
+  return STATE.data.companies.reduce((s, c) => s + metricPeopleCount(c.id, key), 0);
 }
 
 /* ============================================================
@@ -269,12 +316,12 @@ async function cloudLoadMetrics() {
   if (!res.ok) throw new Error("load metrics " + res.status);
   const out = {};
   (await res.json()).forEach(r => {
-    out[r.company_id] = {
+    out[r.company_id] = applyMetricCountsFromNames({
       pending: r.pending || 0, disclosure: r.disclosure || 0, idea: r.idea || 0,
       target: [r.t1 || 0, r.t2 || 0, r.t3 || 0, r.t4 || 0],
       a1Target: [r.a1_t1 || 0, r.a1_t2 || 0, r.a1_t3 || 0, r.a1_t4 || 0],
-      names: normalizeNames(r.names),
-    };
+      names: r.names,
+    });
   });
   return out;
 }
@@ -297,15 +344,18 @@ async function cloudSavePatents(list) {
   if (!del.ok) throw new Error("delete patents " + del.status);
 }
 async function cloudSaveMetrics(map) {
-  const rows = Object.entries(map).map(([cid, m]) => ({
-    company_id: cid,
-    pending: m.pending || 0, disclosure: m.disclosure || 0, idea: m.idea || 0,
-    t1: (m.target || [])[0] || 0, t2: (m.target || [])[1] || 0,
-    t3: (m.target || [])[2] || 0, t4: (m.target || [])[3] || 0,
-    a1_t1: (m.a1Target || [])[0] || 0, a1_t2: (m.a1Target || [])[1] || 0,
-    a1_t3: (m.a1Target || [])[2] || 0, a1_t4: (m.a1Target || [])[3] || 0,
-    names: normalizeNames(m.names),
-  }));
+  const rows = Object.entries(map).map(([cid, m]) => {
+    const synced = applyMetricCountsFromNames(m);
+    return {
+      company_id: cid,
+      pending: synced.pending, disclosure: synced.disclosure, idea: synced.idea,
+      t1: (synced.target || [])[0] || 0, t2: (synced.target || [])[1] || 0,
+      t3: (synced.target || [])[2] || 0, t4: (synced.target || [])[3] || 0,
+      a1_t1: (synced.a1Target || [])[0] || 0, a1_t2: (synced.a1Target || [])[1] || 0,
+      a1_t3: (synced.a1Target || [])[2] || 0, a1_t4: (synced.a1Target || [])[3] || 0,
+      names: synced.names,
+    };
+  });
   if (!rows.length) return;
   const res = await fetch(`${SB_REST}/part_metrics`, {
     method: "POST",
@@ -482,6 +532,7 @@ function applySnapshot(snap) {
   if (!canEdit()) return;
   STATE.data.patents = JSON.parse(JSON.stringify(snap.patents));
   STATE.partMetrics = JSON.parse(JSON.stringify(snap.partMetrics));
+  syncAllPartMetricCounts();
   if (snap.goals) applyGroupGoals(snap.goals);
   savePatents();
   savePartMetrics();
@@ -529,6 +580,7 @@ async function init() {
   STATE.partMetrics = loadPartMetrics();
   // 클라우드(Supabase)에서 공용 데이터 로드 (실패 시 로컬 캐시 사용)
   await cloudInit();
+  syncAllPartMetricCounts();
   // 클라우드가 정상이면 클라우드 상태를 기준으로 히스토리를 새로 시작
   if (STATE.cloudOk) {
     STATE.history = []; STATE.histIndex = -1;
@@ -732,8 +784,8 @@ function getKpiPeoplePopover() {
     el.className = "bar-people-popover kpi-people-popover";
     el.hidden = true;
     el.style.cssText = [
-      "position:fixed", "z-index:2000", "min-width:260px", "max-width:420px",
-      "padding:0.55rem 0.7rem", "font-size:0.82rem", "pointer-events:none",
+      "position:fixed", "z-index:2000", "min-width:200px", "max-width:300px",
+      "padding:0.45rem 0.55rem", "font-size:0.72rem", "pointer-events:none",
       "border-radius:10px", "border:1px solid var(--border,#ddd)",
       "background:var(--popover,#fff)", "color:var(--popover-foreground,#111)",
       "box-shadow:0 8px 24px -8px rgba(0,0,0,0.35)",
@@ -1015,10 +1067,7 @@ function statusPartBreakdown(catKey) {
     let v = 0;
     if (catKey === "a1") v = STATE.data.patents.filter(p => p.company === c.id && p.grade === "A1").length;
     else if (catKey === "a") v = STATE.data.patents.filter(p => p.company === c.id && p.grade === "A").length;
-    else {
-      const m = partMetric(c.id);
-      v = m[catKey] || 0;
-    }
+    else v = metricPeopleCount(c.id, catKey);
     return { name: c.name, value: v };
   }).filter(x => x.value > 0);
 }
@@ -1163,20 +1212,130 @@ const miniQuarterLabel = {
 };
 
 /* 파트별 진행 현황: 파트마다 개별 미니 차트 (A1·A 누적 스택 + 목표 점선) */
+function destroyPartProgressChart(chartKey) {
+  if (STATE.charts[chartKey]) {
+    STATE.charts[chartKey].destroy();
+    delete STATE.charts[chartKey];
+  }
+}
+
+function renderPartProgressChart(companyId, canvasId, chartKey, metaId) {
+  const goals = STATE.data.goals;
+  const canvas = document.getElementById(canvasId);
+  if (!goals || !canvas) return;
+
+  destroyPartProgressChart(chartKey);
+
+  const labels = ["1Q", "2Q", "3Q", "4Q"];
+  const maxQ = currentQuarterForYear(goals.year);
+  const a1Color = cssVar("--chart-5");
+  const aColor = chartColor("--chart-1");
+  const g = partQuarterlyCumByGrade(companyId);
+  const m = partMetric(companyId);
+  const target = m.target;
+  const a1Target = m.a1Target || [0, 0, 0, 0];
+  const hasTarget = target.some(v => v > 0);
+  const hasA1Target = a1Target.some(v => v > 0);
+  const cap = (arr) => arr.map((v, i) => (i < maxQ ? v : null));
+
+  const annual = target[target.length - 1] || 0;
+  const done = g.a1[3] + g.a[3];
+  const a1Done = g.a1[3];
+  const a1Annual = a1Target[a1Target.length - 1] || 0;
+  const meta = metaId ? document.getElementById(metaId) : document.getElementById("meta_" + companyId);
+  if (meta) {
+    const a1Txt = a1Annual ? `A1 ${a1Done}/${a1Annual}` : `A1 ${a1Done}`;
+    const allTxt = annual ? `전체 ${done}/${annual}` : `전체 ${done}`;
+    meta.textContent = `${a1Txt} · ${allTxt}`;
+  }
+
+  const RED = chartColor("--destructive") || "oklch(0.5386 0.1937 26.7249)";
+  const belowA1 = (i) => i < maxQ && hasA1Target && (g.a1[i] < (a1Target[i] || 0));
+  const belowAll = (i) => i < maxQ && hasTarget && ((g.a1[i] + g.a[i]) < (target[i] || 0));
+  const a1Border = labels.map((_, i) => belowA1(i) ? RED : a1Color);
+  const a1BorderW = labels.map((_, i) => belowA1(i) ? 2 : 1);
+  const aBorder = labels.map((_, i) => belowAll(i) ? RED : aColor);
+  const aBorderW = labels.map((_, i) => belowAll(i) ? 2 : 1);
+
+  const datasets = [
+    {
+      type: "bar", label: "A1", data: cap(g.a1),
+      backgroundColor: a1Color, borderColor: a1Border, borderWidth: a1BorderW,
+      stack: "ach", borderRadius: 2, borderSkipped: false,
+    },
+    {
+      type: "bar", label: "A", data: cap(g.a),
+      backgroundColor: withAlpha(aColor, 0.55), borderColor: aBorder, borderWidth: aBorderW,
+      stack: "ach", borderRadius: 2, borderSkipped: false,
+    },
+  ];
+  if (hasA1Target) {
+    datasets.push({
+      type: "line", label: "A1 목표", data: a1Target, stack: "t_a1",
+      borderColor: a1Color, backgroundColor: "transparent",
+      borderWidth: 1.5, borderDash: [3, 3], tension: 0,
+      pointStyle: "triangle", pointRadius: 3, fill: false,
+    });
+  }
+  if (hasTarget) {
+    datasets.push({
+      type: "line", label: "전체 목표", data: target, stack: "t_all",
+      borderColor: cssVar("--muted-foreground"), backgroundColor: "transparent",
+      borderWidth: 1.5, borderDash: [4, 3], tension: 0,
+      pointStyle: "rectRot", pointRadius: 2.5, fill: false,
+    });
+  }
+
+  STATE.charts[chartKey] = new Chart(canvas, {
+    data: { labels, datasets },
+    plugins: [miniQuarterLabel],
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      layout: { padding: { top: 16 } },
+      plugins: {
+        miniQuarterLabel: { qIndex: maxQ - 1 },
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: cssVar("--popover"), titleColor: cssVar("--popover-foreground"),
+          bodyColor: cssVar("--popover-foreground"), borderColor: cssVar("--border"), borderWidth: 1,
+          padding: 8, cornerRadius: 6,
+          callbacks: {
+            label: (item) => item.parsed.y == null ? null : ` ${item.dataset.label}: ${item.parsed.y}건`,
+          },
+        },
+      },
+      scales: {
+        y: { stacked: true, beginAtZero: true, ticks: { precision: 0, font: { size: 9 } } },
+        x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
+      },
+    },
+  });
+}
+
+function renderMetricProgressChart(companyId) {
+  const wrap = document.getElementById("metricProgressChart");
+  const c = STATE.data.companies.find(x => x.id === companyId);
+  if (!wrap || !c) return;
+  wrap.innerHTML = `
+    <div class="mini-card">
+      <div class="mini-title">
+        <span class="swatch" style="background:${chartColor("--" + c.color)}"></span>${esc(c.name)}
+        <span class="mini-meta" id="metricProgressMeta"></span>
+      </div>
+      <div class="mini-chart"><canvas id="metricProgressCanvas"></canvas></div>
+    </div>`;
+  renderPartProgressChart(companyId, "metricProgressCanvas", "metric_prog", "metricProgressMeta");
+}
+
 function renderProgressChart() {
   const goals = STATE.data.goals;
   const grid = document.getElementById("progressGrid");
   if (!goals || !grid) return;
 
-  const labels = ["1Q", "2Q", "3Q", "4Q"];
-  const maxQ = currentQuarterForYear(goals.year);
-  const a1Color = cssVar("--chart-5"); // 진한 초록 = A1 (모든 파트 공통)
-  const aColor = chartColor("--chart-1"); // 초록 = A (모든 파트 공통, NE 색상)
-
   const subEl = document.getElementById("progressSub");
   if (subEl) subEl.textContent = `${goals.year}년 · 파트별 분기 누적 (■ A1 진한초록 / ■ A 초록 / ┄ 전체목표 / ┄ A1목표)`;
 
-  // 각 파트 카드 DOM 생성
   grid.innerHTML = STATE.data.companies.map(c => `
     <div class="mini-card">
       <div class="mini-title">
@@ -1187,91 +1346,12 @@ function renderProgressChart() {
     </div>`).join("");
 
   STATE.data.companies.forEach(c => {
-    const g = partQuarterlyCumByGrade(c.id);
-    const m = partMetric(c.id);
-    const target = m.target;
-    const a1Target = m.a1Target || [0, 0, 0, 0];
-    const hasTarget = target.some(v => v > 0);
-    const hasA1Target = a1Target.some(v => v > 0);
-    const cap = (arr) => arr.map((v, i) => (i < maxQ ? v : null));
-
-    // 메타: A1 실적/목표 + 전체 실적/목표 (그래프의 A1 목표선과 일치)
-    const annual = target[target.length - 1] || 0;
-    const done = g.a1[3] + g.a[3];
-    const a1Done = g.a1[3];
-    const a1Annual = a1Target[a1Target.length - 1] || 0;
-    const meta = document.getElementById("meta_" + c.id);
-    if (meta) {
-      const a1Txt = a1Annual ? `A1 ${a1Done}/${a1Annual}` : `A1 ${a1Done}`;
-      const allTxt = annual ? `전체 ${done}/${annual}` : `전체 ${done}`;
-      meta.textContent = `${a1Txt} · ${allTxt}`;
-    }
-    // 분기별 목표 미달 여부 (현재 분기까지, 누적 실적 < 누적 목표)
-    // A1 막대 = A1 목표 기준 / A(전체) 막대 = 전체 목표 기준
-    const RED = chartColor("--destructive") || "oklch(0.5386 0.1937 26.7249)";
-    const belowA1 = (i) => i < maxQ && hasA1Target && (g.a1[i] < (a1Target[i] || 0));
-    const belowAll = (i) => i < maxQ && hasTarget && ((g.a1[i] + g.a[i]) < (target[i] || 0));
-    const a1Border = labels.map((_, i) => belowA1(i) ? RED : a1Color);
-    const a1BorderW = labels.map((_, i) => belowA1(i) ? 2 : 1);
-    const aBorder = labels.map((_, i) => belowAll(i) ? RED : aColor);
-    const aBorderW = labels.map((_, i) => belowAll(i) ? 2 : 1);
-
-    const datasets = [
-      {
-        type: "bar", label: "A1", data: cap(g.a1),
-        backgroundColor: a1Color, borderColor: a1Border, borderWidth: a1BorderW,
-        stack: "ach", borderRadius: 2, borderSkipped: false,
-      },
-      {
-        type: "bar", label: "A", data: cap(g.a),
-        backgroundColor: withAlpha(aColor, 0.55), borderColor: aBorder, borderWidth: aBorderW,
-        stack: "ach", borderRadius: 2, borderSkipped: false,
-      },
-    ];
-    // 목표선은 각각 독립 stack 으로 두어 막대 누적값에 합산되지 않도록 한다
-    if (hasA1Target) {
-      datasets.push({
-        type: "line", label: "A1 목표", data: a1Target, stack: "t_a1",
-        borderColor: a1Color, backgroundColor: "transparent",
-        borderWidth: 1.5, borderDash: [3, 3], tension: 0,
-        pointStyle: "triangle", pointRadius: 3, fill: false,
-      });
-    }
-    if (hasTarget) {
-      datasets.push({
-        type: "line", label: "전체 목표", data: target, stack: "t_all",
-        borderColor: cssVar("--muted-foreground"), backgroundColor: "transparent",
-        borderWidth: 1.5, borderDash: [4, 3], tension: 0,
-        pointStyle: "rectRot", pointRadius: 2.5, fill: false,
-      });
-    }
-
-    STATE.charts["prog_" + c.id] = new Chart(document.getElementById("prog_" + c.id), {
-      data: { labels, datasets },
-      plugins: [miniQuarterLabel],
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        layout: { padding: { top: 16 } },
-        plugins: {
-          miniQuarterLabel: { qIndex: maxQ - 1 },
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: cssVar("--popover"), titleColor: cssVar("--popover-foreground"),
-            bodyColor: cssVar("--popover-foreground"), borderColor: cssVar("--border"), borderWidth: 1,
-            padding: 8, cornerRadius: 6,
-            callbacks: {
-              label: (item) => item.parsed.y == null ? null : ` ${item.dataset.label}: ${item.parsed.y}건`,
-            },
-          },
-        },
-        scales: {
-          y: { stacked: true, beginAtZero: true, ticks: { precision: 0, font: { size: 9 } } },
-          x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
-        },
-      },
-    });
+    renderPartProgressChart(c.id, "prog_" + c.id, "prog_" + c.id, "meta_" + c.id);
   });
+
+  const metricModal = document.getElementById("metricModal");
+  const companyId = document.getElementById("metricForm")?.companyId?.value;
+  if (metricModal && !metricModal.hidden && companyId) renderMetricProgressChart(companyId);
 }
 
 function baseOptions({ legend }) {
@@ -1298,14 +1378,29 @@ const PORTFOLIO_CATS = [
 ];
 // 이름·제목 수동 입력 가능 (특허 제외 — 출원 목록 연동)
 const METRIC_PEOPLE_KEYS = ["pending", "disclosure", "idea"];
+const METRIC_STAGE_NEXT = { idea: "disclosure", disclosure: "pending" };
+
+function nextMetricStageKey(key) {
+  return METRIC_STAGE_NEXT[key] || null;
+}
+
+function refreshMetricModalIfOpen(companyId) {
+  const metricModal = document.getElementById("metricModal");
+  if (metricModal && !metricModal.hidden) {
+    fillMetricCountSummary(companyId);
+    fillMetricA1Summary(companyId);
+    renderMetricProgressChart(companyId);
+    renderMetricPeopleSections(companyId);
+  }
+}
 
 function partCatValues(companyId) {
-  const m = partMetric(companyId);
+  const counts = metricCountsFromNames(partMetric(companyId).names);
   return {
     patent: STATE.data.patents.filter(p => p.company === companyId).length, // A1 + A
-    pending: m.pending || 0,
-    disclosure: m.disclosure || 0,
-    idea: m.idea || 0,
+    pending: counts.pending,
+    disclosure: counts.disclosure,
+    idea: counts.idea,
   };
 }
 
@@ -1317,7 +1412,7 @@ function partCatNames(companyId, key) {
     const out = [];
     STATE.data.patents.filter(p => p.company === companyId).forEach(p => {
       inventorsOf(p).forEach(name => {
-        out.push({ name, title: p.title || "" });
+        out.push({ name, title: p.title || "", _patent: true });
       });
     });
     return out;
@@ -1345,14 +1440,17 @@ function renderCompanyBars() {
     // 각 구간 너비 = 건수 / 전체 최댓값 → 합계가 클수록 막대가 길어짐
     const segs = PORTFOLIO_CATS.map(cat => {
       const v = vals[cat.key];
-      if (!v) return "";
-      const w = (v / maxTotal) * 100;
+      const isMetric = METRIC_PEOPLE_KEYS.includes(cat.key);
+      if (!v && !isMetric) return "";
       const share = total ? Math.round((v / total) * 100) : 0;
-      const canEditCat = cat.key !== "patent" && editable;
-      const cls = `seg seg-people${canEditCat ? " seg-editable" : ""}`;
-      return `<div class="${cls}" style="width:${w}%;background:${cssVar(cat.color)}" data-company="${c.id}" data-cat="${cat.key}" aria-label="${cat.label} ${v}건 (${share}%)"><span class="seg-num">${v}</span></div>`;
+      const canEditCat = isMetric && editable;
+      const cls = `seg seg-people${canEditCat ? " seg-editable" : ""}${!v && isMetric ? " seg-zero" : ""}`;
+      let style = `background:${cssVar(cat.color)}`;
+      if (v) style += `;width:${(v / maxTotal) * 100}%`;
+      else if (isMetric) style += ";flex:0 0 30px;width:30px;min-width:30px";
+      return `<div class="${cls}" style="${style}" data-company="${c.id}" data-cat="${cat.key}" aria-label="${cat.label} ${v}건 (${share}%)"><span class="seg-num">${v}</span></div>`;
     }).join("");
-    const breakdown = PORTFOLIO_CATS.filter(cat => vals[cat.key])
+    const breakdown = PORTFOLIO_CATS.filter(cat => vals[cat.key] || METRIC_PEOPLE_KEYS.includes(cat.key))
       .map(cat => `${cat.label} ${vals[cat.key]}`).join(" · ") || "데이터 없음";
     return `<div class="bar-row">
       <div class="bar-top">
@@ -1369,6 +1467,21 @@ function renderCompanyBars() {
 }
 
 /* ---------- 포트폴리오 막대: 담당자 호버 표시 + 클릭 편집 ---------- */
+let barPeopleHideTimer = null;
+function cancelBarPeopleHide() {
+  if (barPeopleHideTimer) {
+    clearTimeout(barPeopleHideTimer);
+    barPeopleHideTimer = null;
+  }
+}
+function scheduleBarPeopleHide(ms = 160) {
+  cancelBarPeopleHide();
+  barPeopleHideTimer = setTimeout(hideBarPeoplePopover, ms);
+}
+function isBarPeoplePopoverNode(node) {
+  const pop = document.getElementById("barPeoplePopover");
+  return !!(pop && node && (pop === node || pop.contains(node)));
+}
 function getBarPeoplePopover() {
   let el = document.getElementById("barPeoplePopover");
   if (!el) {
@@ -1378,15 +1491,44 @@ function getBarPeoplePopover() {
     el.hidden = true;
     // 핵심 스타일은 인라인으로도 지정 (styles.css 캐시 대비)
     el.style.cssText = [
-      "position:fixed", "z-index:2000", "min-width:180px", "max-width:280px",
-      "padding:0.55rem 0.7rem", "font-size:0.82rem", "pointer-events:none",
+      "position:fixed", "z-index:2000", "min-width:220px", "max-width:320px",
+      "padding:0.45rem 0.55rem", "font-size:0.72rem", "pointer-events:none",
       "border-radius:10px", "border:1px solid var(--border,#ddd)",
       "background:var(--popover,#fff)", "color:var(--popover-foreground,#111)",
       "box-shadow:0 8px 24px -8px rgba(0,0,0,0.35)",
     ].join(";");
+    el.addEventListener("mouseover", (e) => {
+      if (e.target.closest(".bpp-list, .bpp-empty")) cancelBarPeopleHide();
+    });
+    el.addEventListener("mouseout", (e) => {
+      const zone = e.target.closest(".bpp-list, .bpp-empty");
+      if (!zone) return;
+      const to = e.relatedTarget;
+      if (!to || !zone.contains(to)) scheduleBarPeopleHide();
+    });
     document.body.appendChild(el);
   }
   return el;
+}
+
+function positionBarPeoplePopover(pop, seg) {
+  const r = seg.getBoundingClientRect();
+  const row = seg.closest(".bar-row");
+  const rowR = row?.getBoundingClientRect() || r;
+  const pw = pop.offsetWidth;
+  const ph = pop.offsetHeight;
+  const gap = 8;
+  const edge = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let left = r.left + r.width / 2 - pw / 2;
+  left = Math.max(edge, Math.min(left, vw - pw - edge));
+  let top = rowR.bottom + gap;
+
+  if (top + ph > vh - edge) top = Math.max(edge, vh - ph - edge);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
 }
 
 function showBarPeoplePopover(seg) {
@@ -1394,25 +1536,19 @@ function showBarPeoplePopover(seg) {
   const key = seg.dataset.cat;
   const names = partCatNames(companyId, key);
   const pop = getBarPeoplePopover();
+  cancelBarPeopleHide();
   const listHtml = names.length
-    ? `<ul class="bpp-list">${names.map(p => personPopoverHtml(p)).join("")}</ul>`
+    ? `<ul class="bpp-list">${names.map(p => personBarPopoverHtml(p)).join("")}</ul>`
     : `<div class="bpp-empty">담당자 미입력</div>`;
   pop.innerHTML = `
     <div class="bpp-head">${companyName(companyId)} · ${catLabel(key)} <span>${names.length}명</span></div>
     ${listHtml}`;
   pop.hidden = false;
-  const r = seg.getBoundingClientRect();
-  const pw = pop.offsetWidth, ph = pop.offsetHeight;
-  let left = r.left + r.width / 2 - pw / 2;
-  left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
-  let top = r.top - ph - 8;
-  if (top < 8) top = r.bottom + 8;
-  if (top + ph > window.innerHeight - 8) top = Math.max(8, window.innerHeight - ph - 8);
-  pop.style.left = `${left}px`;
-  pop.style.top = `${top}px`;
+  positionBarPeoplePopover(pop, seg);
 }
 
 function hideBarPeoplePopover() {
+  cancelBarPeopleHide();
   const el = document.getElementById("barPeoplePopover");
   if (el) el.hidden = true;
 }
@@ -1424,12 +1560,21 @@ function bindBarPeopleEvents() {
   wrap.dataset.peopleBound = "1";
   wrap.addEventListener("mouseover", (e) => {
     const seg = e.target.closest(".seg-people");
-    if (seg && wrap.contains(seg)) showBarPeoplePopover(seg);
+    if (seg && wrap.contains(seg)) {
+      cancelBarPeopleHide();
+      showBarPeoplePopover(seg);
+    }
   });
   wrap.addEventListener("mouseout", (e) => {
     const seg = e.target.closest(".seg-people");
+    if (!seg) return;
     const to = e.relatedTarget;
-    if (seg && (!to || !seg.contains(to))) hideBarPeoplePopover();
+    if (to && (seg.contains(to) || isBarPeoplePopoverNode(to))) return;
+    scheduleBarPeopleHide();
+  });
+  wrap.addEventListener("mousedown", (e) => {
+    const seg = e.target.closest(".seg-people");
+    if (seg && wrap.contains(seg)) hideBarPeoplePopover();
   });
   wrap.addEventListener("click", (e) => {
     const seg = e.target.closest(".seg-editable");
@@ -1758,20 +1903,24 @@ function fillMetricA1Summary(companyId) {
   if (!el) return;
   const a1 = partA1Progress(companyId);
   const a = partAProgress(companyId);
-  const year = STATE.data?.goals?.year || "";
-  el.innerHTML = `
-    <div class="metric-a1-row">
-      <span class="metric-a1-tag">${year ? year + "년 " : ""}A1</span>
-      <span>달성 <strong>${a1.done}</strong></span>
-      <span>목표 <strong>${a1.annual || "—"}</strong></span>
-      <span>달성률 <strong>${a1.pct != null ? a1.pct + "%" : "—"}</strong></span>
-    </div>
-    <div class="metric-a1-row">
-      <span class="metric-a1-tag">전체(A)</span>
-      <span>달성 <strong>${a.done}</strong></span>
-      <span>목표 <strong>${a.annual || "—"}</strong></span>
-      <span>달성률 <strong>${a.pct != null ? a.pct + "%" : "—"}</strong></span>
-    </div>`;
+  el.className = "metric-a1-summary kpi-grid";
+  const card = (icon, label, prog) => {
+    const target = prog.annual || 0;
+    const pct = prog.pct ?? 0;
+    const tone = pct >= 100 ? "up" : "";
+    const extra = `<div class="kpi-delta ${tone}">목표 ${target || "—"} · 달성률 ${prog.pct != null ? pct + "%" : "—"}</div>
+      <div class="kpi-progress"><span style="width:${prog.pct != null ? Math.min(pct, 100) : 0}%"></span></div>`;
+    return kpiHTML(icon, label, `${prog.done} <span class="kpi-unit">/ ${target || "—"}</span>`, extra, false, "kpi-major");
+  };
+  el.innerHTML = card("🏅", "A1 등급", a1) + card("🥇", "A 등급", a);
+}
+
+function fillMetricCountSummary(companyId) {
+  const counts = metricCountsFromNames(partMetric(companyId).names);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set("metricPendingCount", counts.pending);
+  set("metricDisclosureCount", counts.disclosure);
+  set("metricIdeaCount", counts.idea);
 }
 
 function openMetricModal(companyId) {
@@ -1781,9 +1930,7 @@ function openMetricModal(companyId) {
   const ro = !canEditPart();
   document.getElementById("metricPartName").textContent = companyName(companyId);
   form.companyId.value = companyId;
-  form.pending.value = m.pending || 0;
-  form.disclosure.value = m.disclosure || 0;
-  form.idea.value = m.idea || 0;
+  fillMetricCountSummary(companyId);
   form.a1t1.value = (m.a1Target || [])[0] || 0;
   form.a1t2.value = (m.a1Target || [])[1] || 0;
   form.a1t3.value = (m.a1Target || [])[2] || 0;
@@ -1805,11 +1952,81 @@ function openMetricModal(companyId) {
   const submitBtn = document.getElementById("metricSubmit");
   if (submitBtn) submitBtn.hidden = ro;
   fillMetricA1Summary(companyId);
+  renderMetricProgressChart(companyId);
   renderMetricPatentList(companyId);
   renderMetricPeopleSections(companyId);
   document.getElementById("metricModal").hidden = false;
 }
-function closeMetricModal() { document.getElementById("metricModal").hidden = true; }
+function closeMetricModal() {
+  destroyPartProgressChart("metric_prog");
+  document.getElementById("metricModal").hidden = true;
+}
+
+function csvCell(v) {
+  return `"${String(v ?? "").replace(/"/g, '""')}"`;
+}
+function csvRow(cells) { return cells.map(csvCell).join(","); }
+function exportMetricModalCSV() {
+  const form = document.getElementById("metricForm");
+  const companyId = form?.companyId?.value;
+  if (!companyId) return;
+  const partName = companyName(companyId);
+  const counts = metricCountsFromNames(partMetric(companyId).names);
+  const pending = counts.pending;
+  const disclosure = counts.disclosure;
+  const idea = counts.idea;
+  const num = (v) => Math.max(0, parseInt(v, 10) || 0);
+  const a1Target = [num(form.a1t1?.value), num(form.a1t2?.value), num(form.a1t3?.value), num(form.a1t4?.value)];
+  const target = [num(form.t1?.value), num(form.t2?.value), num(form.t3?.value), num(form.t4?.value)];
+  const a1 = partA1Progress(companyId);
+  const a = partAProgress(companyId);
+  const year = STATE.data?.goals?.year || "";
+  const lines = [];
+  lines.push(csvRow(["파트", partName]));
+  lines.push("");
+  lines.push(csvRow(["구분", "항목", "값"]));
+  lines.push(csvRow(["목표 달성", `${year}년 A1 달성`, a1.done]));
+  lines.push(csvRow(["목표 달성", `${year}년 A1 목표`, a1.annual ?? ""]));
+  lines.push(csvRow(["목표 달성", `${year}년 A1 달성률`, a1.pct != null ? `${a1.pct}%` : ""]));
+  lines.push(csvRow(["목표 달성", "전체(A) 달성", a.done]));
+  lines.push(csvRow(["목표 달성", "전체(A) 목표", a.annual ?? ""]));
+  lines.push(csvRow(["목표 달성", "전체(A) 달성률", a.pct != null ? `${a.pct}%` : ""]));
+  lines.push("");
+  lines.push(csvRow(["지표", "심사중", pending]));
+  lines.push(csvRow(["지표", "직발서", disclosure]));
+  lines.push(csvRow(["지표", "아이디어", idea]));
+  lines.push("");
+  lines.push(csvRow(["담당자"]));
+  lines.push(csvRow(["구분", "이름", "제목", "작성완료 목표", "진행 단계"]));
+  METRIC_PEOPLE_KEYS.forEach(key => {
+    partCatNames(companyId, key).forEach(p => {
+      const n = normalizePerson(p);
+      const stages = n.stages.map(s => `${s.text || "—"} (${formatReviewDateLabel(s.date)})`).join("; ");
+      lines.push(csvRow([catLabel(key), n.name, n.title, formatReviewDateLabel(n.reviewDate), stages]));
+    });
+  });
+  lines.push("");
+  lines.push(csvRow(["A1 분기별 목표", "1분기", "2분기", "3분기", "4분기"]));
+  lines.push(csvRow(["A1", ...a1Target]));
+  lines.push(csvRow(["전체(A)", ...target]));
+  lines.push("");
+  lines.push(csvRow(["출원 목록"]));
+  lines.push(csvRow(["관리번호", "특허명", "발명자", "등급", "상태", "출원일"]));
+  patentsByCompany(companyId)
+    .sort((x, y) => String(y.filingDate || "").localeCompare(String(x.filingDate || "")))
+    .forEach(p => {
+      lines.push(csvRow([p.id, p.title, (p.inventor || "").trim(), p.grade || "", statusLabel(p.status), p.filingDate || ""]));
+    });
+  const stamp = new Date().toISOString().slice(0, 10);
+  const csv = "\uFEFF" + lines.join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${partName}_지표_${stamp}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 /* 파트 모달 — 심사중·직발서·아이디어 담당자(이름·제목) 미리보기 */
 function renderMetricPeopleSections(companyId) {
@@ -1821,14 +2038,26 @@ function renderMetricPeopleSections(companyId) {
     const preview = people.length
       ? people.map(p => {
           const n = normalizePerson(p);
-          return `<li><strong>${esc(n.name)}</strong>${n.title ? `<span class="mpp-title">${esc(n.title)}</span>` : ""}</li>`;
+          const stages = n.stages.length
+            ? `<span class="mpp-stages">${n.stages.map(s =>
+                `<span class="mpp-stage">${esc(s.text || "—")} · ${esc(formatReviewDateLabel(s.date))}</span>`
+              ).join("")}</span>`
+            : "";
+          return `<li class="mpp-item">
+            <div class="mpp-line mpp-line-name"><strong>${esc(n.name)}</strong></div>
+            <div class="mpp-line mpp-line-title">${n.title ? esc(n.title) : "—"}</div>
+            <div class="mpp-line mpp-line-meta">
+              <span class="mpp-review">작성완료 목표 ${esc(formatReviewDateLabel(n.reviewDate))}</span>
+              ${stages}
+            </div>
+          </li>`;
         }).join("")
       : `<li class="metric-people-empty">담당자 없음</li>`;
     return `
     <div class="metric-people-block">
       <div class="metric-people-head">
         <span>${catLabel(key)} <em class="metric-people-count">${people.length}명</em></span>
-        ${editable ? `<button type="button" class="btn sm metric-people-edit" data-cat="${key}">이름·제목 편집</button>` : ""}
+        ${editable ? `<button type="button" class="btn sm metric-people-edit" data-cat="${key}">담당자 편집</button>` : ""}
       </div>
       <ul class="metric-people-preview">${preview}</ul>
     </div>`;
@@ -2012,6 +2241,7 @@ function bindGoalsEvents() {
 
 function bindMetricEvents() {
   document.getElementById("metricClose")?.addEventListener("click", closeMetricModal);
+  document.getElementById("metricExportCsv")?.addEventListener("click", exportMetricModalCSV);
   document.getElementById("metricCancel")?.addEventListener("click", closeMetricModal);
   document.getElementById("metricModal")?.addEventListener("click", (e) => {
     if (e.target.id === "metricModal") closeMetricModal();
@@ -2038,14 +2268,12 @@ function bindMetricEvents() {
     const target = canEdit()
       ? [num(f.t1.value), num(f.t2.value), num(f.t3.value), num(f.t4.value)]
       : (prev.target || [0, 0, 0, 0]).slice();
-    STATE.partMetrics[id] = {
-      pending: num(f.pending.value),
-      disclosure: num(f.disclosure.value),
-      idea: num(f.idea.value),
+    STATE.partMetrics[id] = applyMetricCountsFromNames({
+      ...prev,
       a1Target,
       target,
       names: normalizeNames(prev.names),
-    };
+    });
     commitChange();
     closeMetricModal();
   });
@@ -2056,13 +2284,15 @@ function openPeopleModal(companyId, key) {
   if (key === "patent") return;        // 특허는 발명자 자동 집계 (편집 X)
   if (!canEditPart()) return;
   const cur = (partMetric(companyId).names?.[key] || []).map(normalizePerson).filter(Boolean);
-  STATE.peopleEdit = { companyId, key, names: cur, titleEditIndex: null };
+  STATE.peopleEdit = { companyId, key, names: cur };
   document.getElementById("peopleModalTitle").textContent =
     `${companyName(companyId)} · ${catLabel(key)} 담당자`;
   const nameInput = document.getElementById("peopleNameInput");
   const titleInput = document.getElementById("peopleTitleInput");
+  const reviewInput = document.getElementById("peopleReviewInput");
   if (nameInput) nameInput.value = "";
   if (titleInput) titleInput.value = "";
+  if (reviewInput) reviewInput.value = "";
   renderPeopleList();
   showModal(document.getElementById("peopleModal"));
   setTimeout(() => nameInput?.focus(), 50);
@@ -2071,68 +2301,154 @@ function closePeopleModal() {
   hideModal(document.getElementById("peopleModal"));
   STATE.peopleEdit = null;
 }
+function renderPeopleAdvanceActions(i, person, key) {
+  if (person.completed && key === "pending") {
+    return `
+      <div class="people-advance-row">
+        <button type="button" class="btn sm people-advance-done" disabled>완료</button>
+        <button type="button" class="btn sm people-done-remove" data-i="${i}">삭제</button>
+      </div>`;
+  }
+  const nextKey = nextMetricStageKey(key);
+  if (!nextKey && key !== "pending") return "";
+  const hint = nextKey ? ` → ${catLabel(nextKey)}` : "";
+  return `
+    <div class="people-advance-row">
+      <button type="button" class="btn sm primary people-advance-next" data-i="${i}">다음 단계로 이동${hint}</button>
+    </div>`;
+}
+function syncPersonFromInputs(i) {
+  if (!STATE.peopleEdit || i < 0 || i >= STATE.peopleEdit.names.length) return;
+  const person = STATE.peopleEdit.names[i];
+  const titleInp = document.getElementById(`peopleTitle_${i}`);
+  const reviewInp = document.getElementById(`peopleReview_${i}`);
+  if (titleInp) person.title = titleInp.value.trim();
+  if (reviewInp) person.reviewDate = reviewInp.value.trim();
+  document.querySelectorAll(`.people-stage-text[data-i="${i}"], .people-stage-date[data-i="${i}"]`).forEach(el => {
+    syncPeopleFieldFromInput(el);
+  });
+}
+function movePersonToNextStage(i) {
+  if (!STATE.peopleEdit || i < 0 || i >= STATE.peopleEdit.names.length) return;
+  syncPersonFromInputs(i);
+  const { companyId, key, names } = STATE.peopleEdit;
+  const person = normalizePerson(names[i]);
+  if (!person) return;
+
+  if (key === "pending") {
+    person.completed = true;
+    names[i] = person;
+    renderPeopleList();
+    return;
+  }
+
+  const nextKey = nextMetricStageKey(key);
+  if (!nextKey) return;
+
+  names.splice(i, 1);
+  const m = partMetric(companyId);
+  const next = normalizeNames(m.names);
+  next[key] = names.map(normalizePerson).filter(Boolean);
+  next[nextKey] = [...(next[nextKey] || []), person];
+  STATE.partMetrics[companyId] = applyMetricCountsFromNames(Object.assign(emptyMetric(), m, { names: next }));
+  commitChange();
+  refreshMetricModalIfOpen(companyId);
+  renderPeopleList();
+}
+function renderPeopleStages(i, stages) {
+  const list = stages.length ? stages : [];
+  const rows = list.map((s, si) => `
+    <div class="people-stage-row">
+      <input type="text" class="input people-stage-text" data-i="${i}" data-si="${si}" value="${esc(s.text)}" placeholder="진행 단계" />
+      <input type="date" class="input people-stage-date" data-i="${i}" data-si="${si}" value="${esc(s.date)}" title="날짜" />
+      <button type="button" class="btn icon people-stage-remove" data-i="${i}" data-si="${si}" title="단계 삭제">✕</button>
+    </div>`).join("");
+  return `
+    <div class="people-stages-block">
+      <div class="people-stages-head">
+        <span class="people-field-label">진행 단계</span>
+        <button type="button" class="btn sm people-stage-add" data-i="${i}">+ 추가</button>
+      </div>
+      <div class="people-stages-list">${rows || '<div class="people-stages-empty">진행 단계 없음 — 추가 버튼으로 입력</div>'}</div>
+    </div>`;
+}
 function renderPeopleList() {
   const ul = document.getElementById("peopleNameList");
   if (!ul || !STATE.peopleEdit) return;
   const names = STATE.peopleEdit.names;
-  const editIdx = STATE.peopleEdit.titleEditIndex;
+  const key = STATE.peopleEdit.key;
   ul.innerHTML = names.length
     ? names.map((p, i) => {
-      if (editIdx === i) {
-        return `
-      <li class="people-name-item is-editing">
-        <div class="people-title-edit">
-          <strong>${esc(p.name)}</strong>
-          <input class="input people-title-edit-input" id="peopleTitleEdit_${i}" data-i="${i}" value="${esc(p.title)}" placeholder="제목 입력" />
-          <div class="people-title-edit-actions">
-            <button type="button" class="btn primary people-title-apply" data-i="${i}">적용</button>
-            <button type="button" class="btn people-title-cancel">취소</button>
-          </div>
-        </div>
-        <button type="button" class="btn icon people-remove" data-i="${i}" title="삭제">✕</button>
-      </li>`;
-      }
-      const hint = p.title ? "" : `<span class="people-item-hint">클릭하여 제목 추가</span>`;
+      const completed = p.completed && key === "pending";
       return `
-      <li class="people-name-item${p.title ? "" : " is-title-missing"}">
-        <button type="button" class="people-item-text people-title-trigger" data-i="${i}" title="${p.title ? "클릭하여 제목 수정" : "클릭하여 제목 추가"}">
-          <strong>${esc(p.name)}</strong>${p.title ? `<span class="people-item-title">${esc(p.title)}</span>` : hint}
-        </button>
-        <button type="button" class="btn icon people-remove" data-i="${i}" title="삭제">✕</button>
+      <li class="people-name-item${completed ? " is-completed" : ""}">
+        <div class="people-item-fields">
+          <div class="people-field-row people-field-main">
+            <span class="people-field-label">이름</span>
+            <strong class="people-item-name">${esc(p.name)}</strong>
+          </div>
+          <div class="people-field-row">
+            <label class="people-field-label" for="peopleTitle_${i}">제목</label>
+            <input class="input people-title-input" id="peopleTitle_${i}" data-i="${i}" value="${esc(p.title)}" placeholder="제목 입력"${completed ? " disabled" : ""} />
+          </div>
+          <div class="people-field-row people-field-review">
+            <label class="people-field-label" for="peopleReview_${i}">작성완료 목표</label>
+            <input type="date" class="input people-review-date" id="peopleReview_${i}" data-i="${i}" value="${esc(p.reviewDate)}" title="작성완료 목표 (비우면 미정)"${completed ? " disabled" : ""} />
+          </div>
+          ${completed ? "" : renderPeopleStages(i, p.stages || [])}
+          ${renderPeopleAdvanceActions(i, p, key)}
+        </div>
+        ${completed ? "" : `<button type="button" class="btn icon people-remove" data-i="${i}" title="담당자 삭제">✕</button>`}
       </li>`;
     }).join("")
-    : '<li class="inventor-patent-empty">담당자가 없습니다. 이름과 제목을 추가하세요.</li>';
+    : '<li class="inventor-patent-empty">담당자가 없습니다. 이름·제목·작성완료 목표를 추가하세요.</li>';
 }
-function startTitleEdit(i) {
+function syncPeopleFieldFromInput(el) {
+  if (!STATE.peopleEdit || !el) return;
+  const i = parseInt(el.dataset.i, 10);
+  if (i < 0 || i >= STATE.peopleEdit.names.length) return;
+  const person = STATE.peopleEdit.names[i];
+  if (el.classList.contains("people-title-input")) {
+    person.title = el.value.trim();
+  } else if (el.classList.contains("people-review-date")) {
+    person.reviewDate = el.value.trim();
+  } else if (el.classList.contains("people-stage-text") || el.classList.contains("people-stage-date")) {
+    const si = parseInt(el.dataset.si, 10);
+    if (!person.stages[si]) person.stages[si] = { text: "", date: "" };
+    if (el.classList.contains("people-stage-text")) person.stages[si].text = el.value.trim();
+    else person.stages[si].date = el.value.trim();
+  }
+}
+function addPeopleStage(i) {
   if (!STATE.peopleEdit || i < 0 || i >= STATE.peopleEdit.names.length) return;
-  STATE.peopleEdit.titleEditIndex = i;
+  if (!Array.isArray(STATE.peopleEdit.names[i].stages)) STATE.peopleEdit.names[i].stages = [];
+  STATE.peopleEdit.names[i].stages.push({ text: "", date: "" });
   renderPeopleList();
-  setTimeout(() => document.getElementById(`peopleTitleEdit_${i}`)?.focus(), 30);
+  const inp = document.querySelector(`.people-stage-text[data-i="${i}"][data-si="${STATE.peopleEdit.names[i].stages.length - 1}"]`);
+  inp?.focus();
 }
-function applyTitleEdit(i) {
+function removePeopleStage(i, si) {
   if (!STATE.peopleEdit || i < 0 || i >= STATE.peopleEdit.names.length) return;
-  const inp = document.getElementById(`peopleTitleEdit_${i}`);
-  STATE.peopleEdit.names[i].title = (inp?.value || "").trim();
-  STATE.peopleEdit.titleEditIndex = null;
-  renderPeopleList();
-}
-function cancelTitleEdit() {
-  if (!STATE.peopleEdit) return;
-  STATE.peopleEdit.titleEditIndex = null;
+  const stages = STATE.peopleEdit.names[i].stages;
+  if (!Array.isArray(stages) || si < 0 || si >= stages.length) return;
+  stages.splice(si, 1);
   renderPeopleList();
 }
 function addPeopleName() {
   if (!STATE.peopleEdit) return;
   const nameInput = document.getElementById("peopleNameInput");
   const titleInput = document.getElementById("peopleTitleInput");
+  const reviewInput = document.getElementById("peopleReviewInput");
   const raw = (nameInput?.value || "").trim();
   if (!raw) return;
   const title = (titleInput?.value || "").trim();
+  const reviewDate = (reviewInput?.value || "").trim();
   raw.split(/[,，、]/).map(s => s.trim()).filter(Boolean).forEach(name => {
-    STATE.peopleEdit.names.push({ name, title });
+    STATE.peopleEdit.names.push({ name, title, reviewDate, stages: [], completed: false });
   });
   if (nameInput) nameInput.value = "";
   if (titleInput) titleInput.value = "";
+  if (reviewInput) reviewInput.value = "";
   renderPeopleList();
   nameInput?.focus();
 }
@@ -2142,11 +2458,10 @@ function savePeopleNames() {
   const m = partMetric(companyId);
   const next = normalizeNames(m.names);
   next[key] = names.map(normalizePerson).filter(Boolean);
-  STATE.partMetrics[companyId] = Object.assign(emptyMetric(), m, { names: next });
+  STATE.partMetrics[companyId] = applyMetricCountsFromNames(Object.assign(emptyMetric(), m, { names: next }));
   commitChange();
   closePeopleModal();
-  const metricModal = document.getElementById("metricModal");
-  if (metricModal && !metricModal.hidden) renderMetricPeopleSections(companyId);
+  refreshMetricModalIfOpen(companyId);
 }
 function bindPeopleEvents() {
   document.getElementById("peopleClose")?.addEventListener("click", closePeopleModal);
@@ -2167,34 +2482,51 @@ function bindPeopleEvents() {
   });
   document.getElementById("peopleSave")?.addEventListener("click", savePeopleNames);
   document.getElementById("peopleNameList")?.addEventListener("click", (e) => {
+    const advance = e.target.closest(".people-advance-next");
+    if (advance && STATE.peopleEdit) {
+      movePersonToNextStage(parseInt(advance.dataset.i, 10));
+      return;
+    }
+    const doneRemove = e.target.closest(".people-done-remove");
+    if (doneRemove && STATE.peopleEdit) {
+      const i = parseInt(doneRemove.dataset.i, 10);
+      if (i >= 0) {
+        STATE.peopleEdit.names.splice(i, 1);
+        const { companyId, key } = STATE.peopleEdit;
+        const m = partMetric(companyId);
+        const next = normalizeNames(m.names);
+        next[key] = STATE.peopleEdit.names.map(normalizePerson).filter(Boolean);
+        STATE.partMetrics[companyId] = applyMetricCountsFromNames(Object.assign(emptyMetric(), m, { names: next }));
+        commitChange();
+        refreshMetricModalIfOpen(companyId);
+        renderPeopleList();
+      }
+      return;
+    }
     const btn = e.target.closest(".people-remove");
     if (btn && STATE.peopleEdit) {
       const i = parseInt(btn.dataset.i, 10);
       if (i >= 0) {
-        if (STATE.peopleEdit.titleEditIndex === i) STATE.peopleEdit.titleEditIndex = null;
         STATE.peopleEdit.names.splice(i, 1);
         renderPeopleList();
       }
       return;
     }
-    const trigger = e.target.closest(".people-title-trigger");
-    if (trigger && STATE.peopleEdit) {
-      startTitleEdit(parseInt(trigger.dataset.i, 10));
+    const addStage = e.target.closest(".people-stage-add");
+    if (addStage && STATE.peopleEdit) {
+      addPeopleStage(parseInt(addStage.dataset.i, 10));
       return;
     }
-    const apply = e.target.closest(".people-title-apply");
-    if (apply && STATE.peopleEdit) {
-      applyTitleEdit(parseInt(apply.dataset.i, 10));
-      return;
+    const rmStage = e.target.closest(".people-stage-remove");
+    if (rmStage && STATE.peopleEdit) {
+      removePeopleStage(parseInt(rmStage.dataset.i, 10), parseInt(rmStage.dataset.si, 10));
     }
-    if (e.target.closest(".people-title-cancel")) cancelTitleEdit();
   });
-  document.getElementById("peopleNameList")?.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    const inp = e.target.closest(".people-title-edit-input");
-    if (!inp || !STATE.peopleEdit) return;
-    e.preventDefault();
-    applyTitleEdit(parseInt(inp.dataset.i, 10));
+  document.getElementById("peopleNameList")?.addEventListener("input", (e) => {
+    syncPeopleFieldFromInput(e.target);
+  });
+  document.getElementById("peopleNameList")?.addEventListener("change", (e) => {
+    syncPeopleFieldFromInput(e.target);
   });
 }
 

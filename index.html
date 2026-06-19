@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Source+Code+Pro&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260601u" />
+  <link rel="stylesheet" href="styles.css?v=20260602j" />
   <style>
     /* JS 로드 전에도 대시보드가 보이지 않도록 */
     body.locked .app,
@@ -275,30 +275,35 @@
 
   <!-- 파트 지표 입력 모달 -->
   <div class="modal-overlay" id="metricModal" hidden>
-    <div class="modal metric-modal" style="max-width:520px">
+    <div class="modal metric-modal">
       <div class="modal-head">
         <h3><span id="metricPartName">파트</span> 지표 · 출원 목록</h3>
-        <button class="btn icon" id="metricClose" title="닫기">✕</button>
+        <div class="modal-head-actions">
+          <button type="button" class="btn sm" id="metricExportCsv" title="모달 내용 CSV 내보내기">CSV</button>
+          <button class="btn icon" id="metricClose" title="닫기">✕</button>
+        </div>
       </div>
       <form id="metricForm" class="modal-body">
         <input type="hidden" name="companyId" />
         <div id="metricA1Summary" class="metric-a1-summary" aria-live="polite"></div>
-        <div class="form-grid">
-          <div class="field span2">
-            <label>⏳ 심사중</label>
-            <input class="input" type="number" min="0" name="pending" value="0" />
+        <div id="metricProgressChart" class="metric-progress-wrap" aria-live="polite"></div>
+        <div class="metric-count-grid">
+          <div class="metric-count-item">
+            <span class="metric-count-label">⏳ 심사중</span>
+            <strong class="metric-count-val" id="metricPendingCount">0</strong>
           </div>
-          <div class="field span2">
-            <label>📝 직발서 작성</label>
-            <input class="input" type="number" min="0" name="disclosure" value="0" />
+          <div class="metric-count-item">
+            <span class="metric-count-label">📝 직발서 작성</span>
+            <strong class="metric-count-val" id="metricDisclosureCount">0</strong>
           </div>
-          <div class="field span2">
-            <label>💡 아이디어 시트</label>
-            <input class="input" type="number" min="0" name="idea" value="0" />
+          <div class="metric-count-item">
+            <span class="metric-count-label">💡 아이디어 시트</span>
+            <strong class="metric-count-val" id="metricIdeaCount">0</strong>
           </div>
         </div>
+        <p class="metric-count-note">건수는 담당자 수와 자동 연동됩니다. 아래에서 이름을 추가·삭제하면 그래프 숫자도 함께 변경됩니다.</p>
         <div class="metric-section-title">👥 담당자 (이름 · 제목)</div>
-        <p class="metric-people-note">특허는 아래 출원 목록과 연동됩니다. 심사중·직발서·아이디어만 이름·제목을 입력할 수 있습니다.</p>
+        <p class="metric-people-note">특허는 아래 출원 목록과 연동됩니다. 심사중·직발서·아이디어는 이름·제목·작성완료 목표·진행 단계를 입력할 수 있습니다.</p>
         <div id="metricPeopleSections"></div>
         <div class="metric-section-title metric-target-section">🏅 A1 분기별 목표 (누적) <span class="metric-target-lock">편집 권한 전용</span></div>
         <div class="form-grid form-grid-4 metric-target-section">
@@ -351,7 +356,7 @@
 
   <!-- 담당자(사람) 편집 모달 -->
   <div class="modal-overlay" id="peopleModal" hidden>
-    <div class="modal" style="max-width:420px">
+    <div class="modal people-modal">
       <div class="modal-head">
         <h3><span id="peopleModalTitle">담당자</span></h3>
         <button class="btn icon" id="peopleClose" title="닫기">✕</button>
@@ -360,6 +365,7 @@
         <div class="people-add">
           <input class="input" id="peopleNameInput" placeholder="이름" />
           <input class="input" id="peopleTitleInput" placeholder="제목 (선택)" />
+          <input class="input" type="date" id="peopleReviewInput" title="작성완료 목표 (비우면 미정)" />
           <button type="button" class="btn primary" id="peopleAddBtn">추가</button>
         </div>
         <ul class="inventor-patent-list people-name-list" id="peopleNameList"></ul>
@@ -372,6 +378,6 @@
   </div>
 
   <script src="floating-cards.js?v=20260601t"></script>
-  <script src="app.js?v=20260601u"></script>
+  <script src="app.js?v=20260602j"></script>
 </body>
 </html>
