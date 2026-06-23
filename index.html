@@ -75,6 +75,7 @@
         </div>
         <div class="actions">
           <button class="btn" id="exportBtn"><span>⬇</span> CSV 내보내기</button>
+          <button class="btn approval-alert-btn" id="approvalBtn" title="대기 중인 승인 요청 보기" hidden>📋 승인 대기 <span class="approval-count" id="approvalCount">0</span></button>
           <button class="btn icon" id="themeToggle" title="다크 모드 전환">🌙</button>
         </div>
       </header>
@@ -285,6 +286,7 @@
       </div>
       <form id="metricForm" class="modal-body">
         <input type="hidden" name="companyId" />
+        <div id="metricPendingNotice" class="approval-pending-notice" hidden>⏳ 이 파트의 수정 내용이 승인 대기 중입니다. 승인 후 반영됩니다.</div>
         <div id="metricA1Summary" class="metric-a1-summary" aria-live="polite"></div>
         <div id="metricProgressChart" class="metric-progress-wrap" aria-live="polite"></div>
         <div class="metric-count-grid">
@@ -374,6 +376,17 @@
           <button type="button" class="btn primary" id="peopleSave">저장</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- 승인 요청 검토 모달 (1144 전용) -->
+  <div class="modal-overlay" id="approvalModal" hidden>
+    <div class="modal approval-modal">
+      <div class="modal-head">
+        <h3>📋 승인 대기 목록</h3>
+        <button class="btn icon" id="approvalClose" title="닫기">✕</button>
+      </div>
+      <div id="approvalModalBody" class="modal-body approval-modal-body"></div>
     </div>
   </div>
 

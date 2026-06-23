@@ -15,6 +15,7 @@ const STATE = {
   histIndex: -1,
   showAll: false,   // 특허 목록 전체 표시 여부
   accessRole: null, // 'edit' | 'view' | 'part' (비밀번호 로그인 후)
+  pendingApprovals: [], // 4001→1144 승인 대기 목록
 };
 
 const ACCESS_EDIT = "1144";
@@ -460,6 +461,212 @@ function updateCloudStatus() {
   else { el.textContent = "● 오프라인 (로컬 저장)"; el.style.color = "var(--muted-foreground)"; }
 }
 
+/* ============================================================
+   승인 요청 워크플로 (4001 파트 → 1144 편집 승인)
+   - 4001 사용자가 담당자 수정 후 "저장 및 승인 요청" → pending 저장
+   - 1144 사용자 접속 시 배지 표시, 모달에서 기존/변경 비교 후 승인·미승인
+   ============================================================ */
+const STORAGE_KEY_APPROVALS = "amd_pending_approvals_v1";
+
+function localLoadPendingApprovals() {
+  try { const r = localStorage.getItem(STORAGE_KEY_APPROVALS); return r ? JSON.parse(r) : []; } catch { return []; }
+}
+function localSavePendingApprovals(list) {
+  try { localStorage.setItem(STORAGE_KEY_APPROVALS, JSON.stringify(list)); } catch {}
+}
+
+async function cloudLoadPendingApprovals() {
+  try {
+    const res = await fetch(`${SB_REST}/pending_approvals?select=*&order=requested_at.asc`, { headers: SB_HEADERS });
+    if (!res.ok) return null;
+    return (await res.json()).map(r => ({
+      id: r.id, companyId: r.company_id, companyName: r.company_name,
+      requestedAt: r.requested_at, beforeData: r.before_data, afterData: r.after_data,
+    }));
+  } catch { return null; }
+}
+async function cloudSavePendingApproval(item) {
+  try {
+    const res = await fetch(`${SB_REST}/pending_approvals`, {
+      method: "POST",
+      headers: { ...SB_HEADERS, Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        id: item.id, company_id: item.companyId, company_name: item.companyName,
+        requested_at: item.requestedAt, before_data: item.beforeData, after_data: item.afterData,
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+async function cloudDeletePendingApproval(id) {
+  try {
+    const res = await fetch(`${SB_REST}/pending_approvals?id=eq.${encodeURIComponent(id)}`, {
+      method: "DELETE", headers: SB_HEADERS,
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+async function loadPendingApprovals() {
+  const cloud = await cloudLoadPendingApprovals();
+  if (cloud) {
+    STATE.pendingApprovals = cloud;
+    localSavePendingApprovals(cloud);
+  } else {
+    STATE.pendingApprovals = localLoadPendingApprovals();
+  }
+  updateApprovalBadge();
+}
+
+async function requestApprovalChange(companyId, beforeData, afterData) {
+  if (!STATE.pendingApprovals) STATE.pendingApprovals = [];
+  const existing = STATE.pendingApprovals.find(a => a.companyId === companyId);
+  if (existing) cloudDeletePendingApproval(existing.id);
+  STATE.pendingApprovals = STATE.pendingApprovals.filter(a => a.companyId !== companyId);
+  const item = {
+    id: `apv_${companyId}_${Date.now()}`,
+    companyId, companyName: companyName(companyId),
+    requestedAt: new Date().toISOString(),
+    beforeData, afterData,
+  };
+  STATE.pendingApprovals.push(item);
+  localSavePendingApprovals(STATE.pendingApprovals);
+  cloudSavePendingApproval(item);
+  updateApprovalBadge();
+  showApprovalToast(`${companyName(companyId)} 파트 수정이 승인 요청되었습니다.`);
+}
+
+function updateApprovalBadge() {
+  const btn = document.getElementById("approvalBtn");
+  const cnt = document.getElementById("approvalCount");
+  if (!btn) return;
+  const list = STATE.pendingApprovals || [];
+  if (STATE.accessRole === "edit" && list.length > 0) {
+    btn.hidden = false;
+    if (cnt) cnt.textContent = list.length;
+  } else {
+    btn.hidden = true;
+  }
+}
+
+function showApprovalToast(msg) {
+  let el = document.getElementById("approvalToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "approvalToast";
+    el.className = "approval-toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("visible");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove("visible"), 3500);
+}
+
+function diffPersonRow(p, cls) {
+  const n = normalizePerson(p);
+  if (!n) return "";
+  let html = `<div class="diff-person ${cls}"><span class="diff-name">${esc(n.name)}</span>`;
+  if (n.title) html += ` <span class="diff-title">${esc(n.title)}</span>`;
+  if (n.reviewDate) html += ` <span class="diff-review">${esc(formatReviewDateLabel(n.reviewDate))}</span>`;
+  return html + `</div>`;
+}
+
+function diffCategoryHtml(bNames, aNames, key) {
+  const bList = (bNames?.[key] || []).map(normalizePerson).filter(Boolean);
+  const aList = (aNames?.[key] || []).map(normalizePerson).filter(Boolean);
+  const bSet = new Set(bList.map(p => p.name));
+  const aSet = new Set(aList.map(p => p.name));
+  const changed = bList.length !== aList.length || bList.some(p => !aSet.has(p.name)) || aList.some(p => !bSet.has(p.name));
+  const bHtml = bList.map(p => diffPersonRow(p, aSet.has(p.name) ? "" : "diff-removed")).join("") || '<div class="diff-empty">없음</div>';
+  const aHtml = aList.map(p => diffPersonRow(p, bSet.has(p.name) ? "" : "diff-added")).join("") || '<div class="diff-empty">없음</div>';
+  return `<div class="diff-category${changed ? "" : " diff-unchanged"}">
+    <div class="diff-cat-label">${catLabel(key)}
+      ${changed
+        ? `<span class="diff-badge diff-badge-changed">${bList.length} → ${aList.length}명</span>`
+        : `<span class="diff-badge diff-badge-same">${bList.length}명 (변경 없음)</span>`}
+    </div>
+    <div class="diff-cols">
+      <div class="diff-col diff-col-before"><div class="diff-col-head">기존</div>${bHtml}</div>
+      <div class="diff-col diff-col-after"><div class="diff-col-head">변경</div>${aHtml}</div>
+    </div>
+  </div>`;
+}
+
+function openApprovalModal() {
+  if (!canEdit()) return;
+  renderApprovalModal();
+  showModal(document.getElementById("approvalModal"));
+}
+
+function renderApprovalModal() {
+  const body = document.getElementById("approvalModalBody");
+  if (!body) return;
+  const list = STATE.pendingApprovals || [];
+  if (!list.length) {
+    body.innerHTML = '<div class="empty" style="padding:2rem">대기 중인 승인 요청이 없습니다.</div>';
+    return;
+  }
+  body.innerHTML = list.map(item => `
+    <div class="approval-item" data-id="${esc(item.id)}">
+      <div class="approval-item-head">
+        <span class="approval-part-name">${esc(item.companyName)} 파트 수정 요청</span>
+        <span class="approval-time">${esc(fmtDateTime(item.requestedAt))}</span>
+      </div>
+      ${METRIC_PEOPLE_KEYS.map(k => diffCategoryHtml(item.beforeData?.names, item.afterData?.names, k)).join("")}
+      <div class="approval-actions">
+        <button class="btn approval-reject" data-id="${esc(item.id)}">미승인</button>
+        <button class="btn primary approval-approve" data-id="${esc(item.id)}">승인</button>
+      </div>
+    </div>`).join('<div class="approval-sep"></div>');
+}
+
+async function approveChange(id) {
+  const item = (STATE.pendingApprovals || []).find(a => a.id === id);
+  if (!item) return;
+  const m = partMetric(item.companyId);
+  STATE.partMetrics[item.companyId] = applyMetricCountsFromNames(
+    Object.assign(emptyMetric(), m, { names: normalizeNames(item.afterData?.names) })
+  );
+  STATE.pendingApprovals = (STATE.pendingApprovals || []).filter(a => a.id !== id);
+  localSavePendingApprovals(STATE.pendingApprovals);
+  await cloudDeletePendingApproval(id);
+  commitChange();
+  updateApprovalBadge();
+  renderApprovalModal();
+  if (!(STATE.pendingApprovals || []).length) hideModal(document.getElementById("approvalModal"));
+  showApprovalToast(`${item.companyName} 파트 수정이 승인되었습니다.`);
+}
+
+async function rejectChange(id) {
+  const item = (STATE.pendingApprovals || []).find(a => a.id === id);
+  STATE.pendingApprovals = (STATE.pendingApprovals || []).filter(a => a.id !== id);
+  localSavePendingApprovals(STATE.pendingApprovals);
+  await cloudDeletePendingApproval(id);
+  updateApprovalBadge();
+  renderApprovalModal();
+  if (!(STATE.pendingApprovals || []).length) hideModal(document.getElementById("approvalModal"));
+  showApprovalToast(`${item?.companyName || ""} 파트 수정 요청이 미승인 처리되었습니다.`);
+}
+
+function bindApprovalEvents() {
+  document.getElementById("approvalBtn")?.addEventListener("click", openApprovalModal);
+  document.getElementById("approvalClose")?.addEventListener("click", () => hideModal(document.getElementById("approvalModal")));
+  document.getElementById("approvalModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "approvalModal") hideModal(document.getElementById("approvalModal"));
+  });
+  document.addEventListener("keydown", (e) => {
+    const m = document.getElementById("approvalModal");
+    if (e.key === "Escape" && m && !m.hidden) hideModal(m);
+  });
+  document.getElementById("approvalModalBody")?.addEventListener("click", (e) => {
+    const apBtn = e.target.closest(".approval-approve");
+    if (apBtn) { approveChange(apBtn.dataset.id); return; }
+    const rjBtn = e.target.closest(".approval-reject");
+    if (rjBtn) { rejectChange(rjBtn.dataset.id); }
+  });
+}
+
 /* ---------- 버전 히스토리 (3단계 되돌리기/앞으로) ---------- */
 const STORAGE_KEY_HISTORY = "amd_history_v1";
 const HISTORY_MAX = 4; // 현재 + 3단계 이전
@@ -609,6 +816,8 @@ async function init() {
   updateDataMeta();
   updateHistButtons();
   applyAccessUI();
+  if (canEdit()) await loadPendingApprovals();
+  bindApprovalEvents();
   if (typeof initFloatingCards === "function") initFloatingCards();
 }
 
@@ -1955,6 +2164,9 @@ function openMetricModal(companyId) {
   renderMetricProgressChart(companyId);
   renderMetricPatentList(companyId);
   renderMetricPeopleSections(companyId);
+  const hasPending = (STATE.pendingApprovals || []).some(a => a.companyId === companyId);
+  const pendingNotice = document.getElementById("metricPendingNotice");
+  if (pendingNotice) pendingNotice.hidden = !(STATE.accessRole === "part" && hasPending);
   document.getElementById("metricModal").hidden = false;
 }
 function closeMetricModal() {
@@ -2294,6 +2506,8 @@ function openPeopleModal(companyId, key) {
   if (titleInput) titleInput.value = "";
   if (reviewInput) reviewInput.value = "";
   renderPeopleList();
+  const saveBtn = document.getElementById("peopleSave");
+  if (saveBtn) saveBtn.textContent = STATE.accessRole === "part" ? "저장 및 승인 요청" : "저장";
   showModal(document.getElementById("peopleModal"));
   setTimeout(() => nameInput?.focus(), 50);
 }
@@ -2350,6 +2564,14 @@ function movePersonToNextStage(i) {
   const next = normalizeNames(m.names);
   next[key] = names.map(normalizePerson).filter(Boolean);
   next[nextKey] = [...(next[nextKey] || []), person];
+  if (STATE.accessRole === "part") {
+    const beforeData = { names: JSON.parse(JSON.stringify(normalizeNames(m.names))) };
+    const afterData = { names: JSON.parse(JSON.stringify(next)) };
+    requestApprovalChange(companyId, beforeData, afterData);
+    closePeopleModal();
+    closeMetricModal();
+    return;
+  }
   STATE.partMetrics[companyId] = applyMetricCountsFromNames(Object.assign(emptyMetric(), m, { names: next }));
   commitChange();
   refreshMetricModalIfOpen(companyId);
@@ -2452,12 +2674,20 @@ function addPeopleName() {
   renderPeopleList();
   nameInput?.focus();
 }
-function savePeopleNames() {
+async function savePeopleNames() {
   if (!STATE.peopleEdit) return;
   const { companyId, key, names } = STATE.peopleEdit;
   const m = partMetric(companyId);
   const next = normalizeNames(m.names);
   next[key] = names.map(normalizePerson).filter(Boolean);
+  if (STATE.accessRole === "part") {
+    const beforeData = { names: JSON.parse(JSON.stringify(normalizeNames(m.names))) };
+    const afterData = { names: JSON.parse(JSON.stringify(next)) };
+    await requestApprovalChange(companyId, beforeData, afterData);
+    closePeopleModal();
+    closeMetricModal();
+    return;
+  }
   STATE.partMetrics[companyId] = applyMetricCountsFromNames(Object.assign(emptyMetric(), m, { names: next }));
   commitChange();
   closePeopleModal();
@@ -2496,6 +2726,14 @@ function bindPeopleEvents() {
         const m = partMetric(companyId);
         const next = normalizeNames(m.names);
         next[key] = STATE.peopleEdit.names.map(normalizePerson).filter(Boolean);
+        if (STATE.accessRole === "part") {
+          const beforeData = { names: JSON.parse(JSON.stringify(normalizeNames(m.names))) };
+          const afterData = { names: JSON.parse(JSON.stringify(next)) };
+          requestApprovalChange(companyId, beforeData, afterData);
+          closePeopleModal();
+          closeMetricModal();
+          return;
+        }
         STATE.partMetrics[companyId] = applyMetricCountsFromNames(Object.assign(emptyMetric(), m, { names: next }));
         commitChange();
         refreshMetricModalIfOpen(companyId);
@@ -2592,6 +2830,7 @@ function applyAccessUI() {
   const hist = document.querySelector(".hist-controls");
   if (hist) hist.hidden = !edit;
   document.querySelectorAll(".th-actions").forEach(el => { el.hidden = !edit; });
+  updateApprovalBadge();
 }
 
 async function startApp() {
